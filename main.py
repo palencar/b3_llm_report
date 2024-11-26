@@ -82,3 +82,8 @@ if __name__ == '__main__':
                                        model=os.getenv('OPENAI_MODEL_NAME'))
 
     print(analysis)
+
+    os.makedirs(f"reports", exist_ok=True)
+
+    with open(os.path.join("reports", f"{symbol}.md"), 'w') as file:
+        file.write(analysis)

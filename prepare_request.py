@@ -28,12 +28,15 @@ Você é um analista financeiro especializado em ações brasileiras. Forneça u
 
 ### Critérios de Análise
 - Utilize APENAS os dados fornecidos nesta conversa
+- Indique explicitamente o nível de confiança para cada conclusão com base na quantidade e qualidade dos dados disponíveis
+- Caso a confiança seja limitada, forneça justificativas e descreva as limitações
 - Avalie cada horizonte considerando:
   * Tendências de mercado
   * Indicadores fundamentalistas
   * Oscilações históricas
   * Potencial de crescimento
   * Riscos setoriais e específicos da empresa
+- Cada conclusão deve ser apoiada por pelo menos dois elementos de evidência extraídos das seções de dados detalhados
 
 ### Formato de Resposta
 
@@ -41,6 +44,7 @@ Você é um analista financeiro especializado em ações brasileiras. Forneça u
 - Recomendação Geral:
 - Potencial de Retorno:
 - Nível de Risco:
+- Incertezas e Limitações:
 
 #### Análise por Horizonte
 
@@ -70,5 +74,6 @@ Você é um analista financeiro especializado em ações brasileiras. Forneça u
 ### Disclaimer
 - Esta análise é baseada em dados disponíveis até a data atual
 - Recomenda-se sempre complementar com análise própria e consulta a especialistas
+- As respostas geradas podem variar dependendo da interpretação dos dados e dos critérios aplicados
 """
     return prompt
