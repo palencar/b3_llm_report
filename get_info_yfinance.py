@@ -74,7 +74,7 @@ def extract_yfinance_info(symbol: str):
             "Volume": info.get("volume"),
             "Average Volume": info.get("averageVolume"),
         },
-        "Analyst Recommendations": recommendations.set_index('period').to_dict(orient="index")
+        "Analyst Recommendations": recommendations.set_index('period').to_dict(orient="index") if recommendations is not None and len(recommendations) > 0 else {}
     }, indent=2)
 
 
