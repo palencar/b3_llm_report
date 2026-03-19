@@ -232,7 +232,7 @@ def run_ingest(
                 # prices (apenas ultimo preco)
                 price_ts = payload.get("regularMarketTime")
                 if isinstance(price_ts, (int, float)):
-                    price_ts = datetime.utcfromtimestamp(price_ts)
+                    price_ts = datetime.fromtimestamp(price_ts, tz=timezone.utc).replace(tzinfo=None)
                 else:
                     price_ts = fetched_at
 
