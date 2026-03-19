@@ -2,7 +2,7 @@ import hashlib
 import json
 import os
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Any, Optional
 
 from b3_core.config import Config
@@ -166,7 +166,7 @@ def run_ingest(
     write_snapshot: bool = True,
     skip_db: bool = False,
 ) -> int:
-    fetched_at = datetime.utcnow()
+    fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
     source = "brapi.dev"
 
     if not tickers:

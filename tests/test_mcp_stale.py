@@ -2,7 +2,7 @@
 # Todos os imports e patches usam b3_mcp.app (sem prefixo src.)
 import pytest
 from unittest.mock import patch, MagicMock
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
 from b3_mcp.app import app
@@ -36,7 +36,7 @@ def _fake_con():
 
 
 def test_stale_false_quando_last_update_recente():
-    recent = datetime.utcnow() - timedelta(hours=1)
+    recent = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
     with patch("b3_mcp.app.os.path.exists", return_value=True), \
          patch("b3_mcp.app.connect", return_value=_fake_con()), \
          patch("b3_mcp.app.missing_tables", return_value=[]), \
@@ -56,7 +56,7 @@ def test_stale_false_quando_last_update_recente():
 
 
 def test_stale_true_quando_last_update_antigo():
-    old = datetime.utcnow() - timedelta(hours=30)
+    old = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=30)
     with patch("b3_mcp.app.os.path.exists", return_value=True), \
          patch("b3_mcp.app.connect", return_value=_fake_con()), \
          patch("b3_mcp.app.missing_tables", return_value=[]), \

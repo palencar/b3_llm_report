@@ -1,13 +1,13 @@
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def _emit(level: str, job: str, **fields) -> None:
     payload = {
         "level": level,
         "job": job,
-        "ts": datetime.utcnow().isoformat() + "Z",
+        "ts": datetime.now(timezone.utc).isoformat(),
     }
     payload.update(fields)
     print(json.dumps(payload, ensure_ascii=False), file=sys.stdout)

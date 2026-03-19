@@ -1,6 +1,6 @@
 import os
 import time
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Header, Query
@@ -22,7 +22,7 @@ _ticker_fund_key: dict[str, str] = {}
 def _is_stale(last_update, fund_ttl: int) -> bool:
     if last_update is None:
         return True
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     return (now - last_update) > timedelta(seconds=fund_ttl)
 
 
