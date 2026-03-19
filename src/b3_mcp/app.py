@@ -1,10 +1,12 @@
 import os
-from datetime import datetime, date
+import time
+from datetime import datetime, date, timedelta
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Header, Query
 
 from b3_core.config import load_config
+from b3_core.log import log_info, log_error
 from b3_mcp.cache import TTLCache
 from b3_storage.db import connect, missing_tables, table_exists
 
@@ -12,6 +14,30 @@ from b3_storage.db import connect, missing_tables, table_exists
 app = FastAPI(title="B3 MCP Server", version="0.1.0")
 config = load_config()
 cache = TTLCache()
+
+# índice lateral: ticker → última cache_key de fundamentals
+_ticker_fund_key: dict[str, str] = {}
+
+
+def _is_stale(last_update, fund_ttl: int) -> bool:
+    if last_update is None:
+        return True
+    now = datetime.utcnow()
+    return (now - last_update) > timedelta(seconds=fund_ttl)
+
+
+@app.middleware("http")
+async def log_requests(request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    log_info(
+        "mcp_request",
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code,
+        duration_ms=int((time.time() - start) * 1000),
+    )
+    return response
 
 
 def _parse_date(value: Optional[str]) -> Optional[date]:
@@ -115,7 +141,8 @@ def _company_metadata(con, ticker: str) -> dict:
         "name": row[0],
         "sector": row[1],
         "industry": row[2],
-        "last_update": row[3].isoformat() if row[3] else None,
+        "last_update": row[3],          # datetime bruto para cálculo de stale
+        "last_update_str": row[3].isoformat() if row[3] else None,  # string para resposta
         "source": row[4],
     }
 
@@ -175,11 +202,24 @@ def fundamentals(
     as_of_date = _parse_date(as_of)
     module_list = [m.strip() for m in (modules or "snapshot,income,balance,ratios").split(",") if m.strip()]
 
+    # fallback degradado: se DB inacessível, tenta servir cache stale
+    if not os.path.exists(config.db_path):
+        fallback_key = _ticker_fund_key.get(ticker)
+        if fallback_key:
+            cached = cache.get(fallback_key)
+            if cached:
+                result = dict(cached)
+                result["metadata"] = dict(result.get("metadata", {}))
+                result["metadata"]["stale"] = True
+                return result
+        raise HTTPException(status_code=503, detail="DuckDB indisponivel e sem cache.")
+
     con = _get_db()
     meta = _company_metadata(con, ticker)
-    last_update = meta.get("last_update")
+    last_update = meta.get("last_update")        # datetime bruto
+    last_update_str = meta.get("last_update_str")  # string para resposta
 
-    cache_key = f"fund:{ticker}:{last_update}:{as_of}:{','.join(module_list)}"
+    cache_key = f"fund:{ticker}:{last_update_str}:{as_of}:{','.join(module_list)}"
     cached = cache.get(cache_key)
     if cached:
         con.close()
@@ -189,8 +229,8 @@ def fundamentals(
     income = {}
     balance = {}
     ratios = {}
-
     partial = False
+
     if "snapshot" in module_list:
         period = _latest_period(con, ticker, "snapshot", as_of_date)
         snapshot = _load_kv(con, ticker, "snapshot", period)
@@ -211,9 +251,7 @@ def fundamentals(
             query = """
                 SELECT ratio_name, value
                 FROM (
-                    SELECT
-                        ratio_name,
-                        value,
+                    SELECT ratio_name, value,
                         ROW_NUMBER() OVER (PARTITION BY ratio_name ORDER BY period DESC) AS rn
                     FROM ratios
                     WHERE ticker = ? AND period <= ?
@@ -225,9 +263,7 @@ def fundamentals(
             query = """
                 SELECT ratio_name, value
                 FROM (
-                    SELECT
-                        ratio_name,
-                        value,
+                    SELECT ratio_name, value,
                         ROW_NUMBER() OVER (PARTITION BY ratio_name ORDER BY period DESC) AS rn
                     FROM ratios
                     WHERE ticker = ?
@@ -252,8 +288,8 @@ def fundamentals(
         "ratios": ratios if "ratios" in module_list else {},
         "price": price,
         "metadata": {
-            "last_update": last_update,
-            "stale": last_update is None,
+            "last_update": last_update_str,
+            "stale": _is_stale(last_update, config.fund_ttl),
             "partial": partial,
             "source": meta.get("source"),
             "name": meta.get("name"),
@@ -263,6 +299,7 @@ def fundamentals(
     }
 
     cache.set(cache_key, response, config.fund_ttl)
+    _ticker_fund_key[ticker] = cache_key
     con.close()
     return response
 
