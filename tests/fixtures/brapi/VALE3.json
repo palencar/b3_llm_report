@@ -1,0 +1,61 @@
+{
+  "results": [
+    {
+      "symbol": "VALE3",
+      "shortName": "VALE ON",
+      "longName": "Vale S.A.",
+      "currency": "BRL",
+      "sector": "Basic Materials",
+      "industry": "Other Industrial Metals & Mining",
+      "regularMarketTime": 1710374400,
+      "regularMarketPrice": 65.80,
+      "regularMarketOpen": 65.10,
+      "regularMarketDayHigh": 66.50,
+      "regularMarketDayLow": 64.90,
+      "regularMarketVolume": 52000000,
+      "financialData": {
+        "revenue": 185000000000.0,
+        "grossProfits": 98000000000.0,
+        "ebitda": 82000000000.0,
+        "operatingCashflow": 68000000000.0,
+        "freeCashflow": 48000000000.0,
+        "totalCash": 35000000000.0,
+        "totalDebt": 115000000000.0
+      },
+      "balanceSheetHistory": [
+        {
+          "endDate": "2023-12-31",
+          "totalAssets": 420000000000.0,
+          "totalLiabilities": 265000000000.0,
+          "totalStockholderEquity": 155000000000.0,
+          "cash": 35000000000.0
+        },
+        {
+          "endDate": "2022-12-31",
+          "totalAssets": 410000000000.0,
+          "totalLiabilities": 255000000000.0,
+          "totalStockholderEquity": 155000000000.0,
+          "cash": 42000000000.0
+        }
+      ],
+      "incomeStatementHistory": [
+        {
+          "endDate": "2023-12-31",
+          "totalRevenue": 185000000000.0,
+          "grossProfit": 98000000000.0,
+          "netIncome": 44500000000.0,
+          "ebit": 75000000000.0
+        },
+        {
+          "endDate": "2022-12-31",
+          "totalRevenue": 220000000000.0,
+          "grossProfit": 120000000000.0,
+          "netIncome": 72000000000.0,
+          "ebit": 102000000000.0
+        }
+      ]
+    }
+  ],
+  "requestedAt": "2024-03-14T00:00:00.000Z",
+  "took": "11ms"
+}

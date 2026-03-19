@@ -1,0 +1,59 @@
+{
+  "results": [
+    {
+      "symbol": "ITUB4",
+      "shortName": "ITAUUNIBANCO PN",
+      "longName": "Itaú Unibanco Holding S.A.",
+      "currency": "BRL",
+      "sector": "Financial Services",
+      "industry": "Banks - Regional",
+      "regularMarketTime": 1710374400,
+      "regularMarketPrice": 33.20,
+      "regularMarketOpen": 32.90,
+      "regularMarketDayHigh": 33.50,
+      "regularMarketDayLow": 32.75,
+      "regularMarketVolume": 38000000,
+      "financialData": {
+        "revenue": 110000000000.0,
+        "grossProfits": 75000000000.0,
+        "ebitda": 55000000000.0,
+        "totalCash": 240000000000.0,
+        "totalDebt": 580000000000.0
+      },
+      "balanceSheetHistory": [
+        {
+          "endDate": "2023-12-31",
+          "totalAssets": 2800000000000.0,
+          "totalLiabilities": 2550000000000.0,
+          "totalStockholderEquity": 250000000000.0,
+          "cash": 240000000000.0
+        },
+        {
+          "endDate": "2022-12-31",
+          "totalAssets": 2600000000000.0,
+          "totalLiabilities": 2370000000000.0,
+          "totalStockholderEquity": 230000000000.0,
+          "cash": 210000000000.0
+        }
+      ],
+      "incomeStatementHistory": [
+        {
+          "endDate": "2023-12-31",
+          "totalRevenue": 110000000000.0,
+          "grossProfit": 75000000000.0,
+          "netIncome": 33000000000.0,
+          "ebit": 45000000000.0
+        },
+        {
+          "endDate": "2022-12-31",
+          "totalRevenue": 98000000000.0,
+          "grossProfit": 67000000000.0,
+          "netIncome": 30000000000.0,
+          "ebit": 41000000000.0
+        }
+      ]
+    }
+  ],
+  "requestedAt": "2024-03-14T00:00:00.000Z",
+  "took": "12ms"
+}

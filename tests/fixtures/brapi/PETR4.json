@@ -1,0 +1,61 @@
+{
+  "results": [
+    {
+      "symbol": "PETR4",
+      "shortName": "PETROBRAS PN",
+      "longName": "Petróleo Brasileiro S.A. - Petrobras",
+      "currency": "BRL",
+      "sector": "Energy",
+      "industry": "Oil & Gas Integrated",
+      "regularMarketTime": 1710374400,
+      "regularMarketPrice": 38.50,
+      "regularMarketOpen": 38.10,
+      "regularMarketDayHigh": 38.90,
+      "regularMarketDayLow": 37.80,
+      "regularMarketVolume": 45000000,
+      "financialData": {
+        "revenue": 527000000000.0,
+        "grossProfits": 280000000000.0,
+        "ebitda": 210000000000.0,
+        "operatingCashflow": 175000000000.0,
+        "freeCashflow": 120000000000.0,
+        "totalCash": 68000000000.0,
+        "totalDebt": 320000000000.0
+      },
+      "balanceSheetHistory": [
+        {
+          "endDate": "2023-12-31",
+          "totalAssets": 980000000000.0,
+          "totalLiabilities": 620000000000.0,
+          "totalStockholderEquity": 360000000000.0,
+          "cash": 68000000000.0
+        },
+        {
+          "endDate": "2022-12-31",
+          "totalAssets": 912000000000.0,
+          "totalLiabilities": 591000000000.0,
+          "totalStockholderEquity": 321000000000.0,
+          "cash": 55000000000.0
+        }
+      ],
+      "incomeStatementHistory": [
+        {
+          "endDate": "2023-12-31",
+          "totalRevenue": 527000000000.0,
+          "grossProfit": 280000000000.0,
+          "netIncome": 124600000000.0,
+          "ebit": 195000000000.0
+        },
+        {
+          "endDate": "2022-12-31",
+          "totalRevenue": 600000000000.0,
+          "grossProfit": 340000000000.0,
+          "netIncome": 188000000000.0,
+          "ebit": 250000000000.0
+        }
+      ]
+    }
+  ],
+  "requestedAt": "2024-03-14T00:00:00.000Z",
+  "took": "15ms"
+}
