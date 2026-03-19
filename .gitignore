@@ -6,3 +6,7 @@ __pycache__/
 data/
 venv/
 .venv/
+reports/
+PRD*.md
+PROGRESSO.md
+.idea/
