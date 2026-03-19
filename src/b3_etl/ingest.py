@@ -9,6 +9,7 @@ from b3_core.config import Config
 from b3_core.log import log_info, log_error
 from b3_storage.db import connect, missing_tables, table_exists
 from b3_etl.brapi import fetch_quote, BrapiError
+from b3_etl.fundamentus import fetch_page, parse_indicators, _FIELD_MAP
 
 
 def _safe_float(value: Any) -> Optional[float]:
@@ -157,6 +158,87 @@ def _write_snapshot(con, snapshot_dir: str, snapshot_date: str) -> None:
             continue
         out_path = os.path.join(target_dir, f"{table}.parquet")
         con.execute(f"COPY {table} TO '{out_path}' (FORMAT PARQUET)")
+
+
+def _ingest_fundamentus_ticker(
+    con,
+    ticker: str,
+    config: Config,
+    fetched_at: datetime,
+) -> None:
+    """Busca e grava indicadores do Fundamentus para um ticker.
+
+    Não propaga exceções — falhas são logadas e a execução continua.
+    Escritas no DuckDB são atômicas (BEGIN/COMMIT/ROLLBACK próprios).
+    Ratios são gravados em pontos percentuais (ex.: ROE 14,56% → 14.56).
+    """
+    try:
+        html = fetch_page(ticker)
+    except Exception as exc:
+        log_error("etl_ticker_fundamentus", ticker=ticker, error=str(exc))
+        return
+
+    raw_indicators = parse_indicators(html)
+    if not raw_indicators:
+        log_error(
+            "etl_ticker_fundamentus", ticker=ticker, error="nenhum campo extraído"
+        )
+        return
+
+    # gravar HTML bruto
+    ts = fetched_at.strftime("%Y%m%dT%H%M%SZ")
+    path_dir = os.path.join(config.raw_dir, "fundamentus", ticker)
+    os.makedirs(path_dir, exist_ok=True)
+    path = os.path.join(path_dir, f"{ts}.html")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+    checksum = hashlib.sha256(html.encode("utf-8")).hexdigest()
+    size_bytes = os.path.getsize(path)
+
+    source = "fundamentus.com.br"
+    try:
+        con.execute("BEGIN")
+        for label, raw_value in raw_indicators.items():
+            if label not in _FIELD_MAP:
+                continue
+            canonical_key, dest = _FIELD_MAP[label]
+            value = _safe_float(raw_value)
+            if value is None:
+                continue
+            if dest == "ratios":
+                _delete_then_insert(
+                    con,
+                    "ratios",
+                    ["ticker", "period", "ratio_name"],
+                    [ticker, fetched_at.date(), canonical_key],
+                    [ticker, fetched_at.date(), canonical_key, value, fetched_at],
+                    ["ticker", "period", "ratio_name", "value", "computed_at"],
+                )
+            else:  # "snapshot" ou "balance"
+                _delete_then_insert(
+                    con,
+                    "fundamentals",
+                    ["ticker", "period", "statement_type", "key"],
+                    [ticker, fetched_at.date(), dest, canonical_key],
+                    [
+                        ticker, fetched_at.date(), dest, canonical_key,
+                        value, "BRL", source, fetched_at,
+                    ],
+                    ["ticker", "period", "statement_type", "key",
+                     "value", "currency", "source", "fetched_at"],
+                )
+        _delete_then_insert(
+            con,
+            "raw_files",
+            ["source", "path"],
+            [source, path],
+            [source, path, fetched_at, checksum, size_bytes],
+            ["source", "path", "fetched_at", "checksum", "size_bytes"],
+        )
+        con.execute("COMMIT")
+    except Exception as exc:
+        con.execute("ROLLBACK")
+        log_error("etl_ticker_fundamentus", ticker=ticker, error=str(exc))
 
 
 def run_ingest(
