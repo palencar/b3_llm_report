@@ -412,6 +412,9 @@ def run_ingest(
                 log_error("etl_ticker", ticker=ticker, error=str(exc))
                 continue
 
+        if con and not missing:
+            _ingest_fundamentus_ticker(con, ticker, config, fetched_at)
+
         log_info(
             "etl_ticker",
             ticker=ticker,

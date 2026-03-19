@@ -182,9 +182,12 @@ def test_run_ingest_three_tickers(tmp_path):
     call_count = {"n": 0}
 
     def fake_urlopen(req, timeout=30):
-        ticker = req.full_url.split("/quote/")[1].split("?")[0]
-        call_count["n"] += 1
-        return _make_urlopen_mock(fixtures[ticker])
+        if "brapi.dev" in req.full_url:
+            ticker = req.full_url.split("/quote/")[1].split("?")[0]
+            call_count["n"] += 1
+            return _make_urlopen_mock(fixtures[ticker])
+        # Fundamentus — simular falha silenciosa (sem DB write, sem quebrar o job)
+        raise OSError("fundamentus bloqueado no teste")
 
     with patch("urllib.request.urlopen", side_effect=fake_urlopen):
         rc = run_ingest(TICKERS, config, ["financialData"], write_snapshot=False)
