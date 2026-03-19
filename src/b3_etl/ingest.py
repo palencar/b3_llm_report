@@ -1,26 +1,14 @@
 import hashlib
 import json
 import os
-from datetime import datetime, date
+import time
+from datetime import datetime, date, timezone
 from typing import Any, Optional
 
 from b3_core.config import Config
+from b3_core.log import log_info, log_error
 from b3_storage.db import connect, missing_tables, table_exists
 from b3_etl.brapi import fetch_quote, BrapiError
-
-
-def _utc_now() -> datetime:
-    return datetime.utcnow()
-
-
-def _log(level: str, message: str, **fields: Any) -> None:
-    payload = {
-        "nivel": level,
-        "mensagem": message,
-        "ts": _utc_now().isoformat() + "Z",
-    }
-    payload.update(fields)
-    print(json.dumps(payload, ensure_ascii=False))
 
 
 def _safe_float(value: Any) -> Optional[float]:
@@ -178,11 +166,11 @@ def run_ingest(
     write_snapshot: bool = True,
     skip_db: bool = False,
 ) -> int:
-    fetched_at = _utc_now()
+    fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
     source = "brapi.dev"
 
     if not tickers:
-        _log("erro", "Nenhum ticker informado")
+        log_error("etl_start", error="nenhum ticker informado")
         return 1
 
     con = None
@@ -192,20 +180,26 @@ def run_ingest(
         con = connect(config.db_path, read_only=False)
         missing = missing_tables(con)
         if missing:
-            _log("erro", "Tabelas ausentes no DuckDB; inicialize o schema antes de ingerir", tabelas=missing)
+            log_error("etl_start", error="tabelas ausentes", tabelas=missing)
 
     os.makedirs(config.raw_dir, exist_ok=True)
+
+    log_info("etl_start", tickers=tickers, modules=modules)
 
     for ticker in tickers:
         try:
             data = fetch_quote(ticker, modules, config.brapi_base_url, config.brapi_key)
         except BrapiError as exc:
-            _log("erro", "Falha ao buscar dados", ticker=ticker, detalhe=str(exc))
+            log_error("etl_ticker", ticker=ticker, error=str(exc))
             continue
+
+        fundamentals_records: list[dict] = []
+        rows_prices = 0
+        ticker_start = time.time()
 
         results = data.get("results") or []
         if not results:
-            _log("erro", "Resposta BRAPI sem resultados", ticker=ticker)
+            log_error("etl_ticker", ticker=ticker, error="resposta BRAPI sem resultados")
             continue
 
         payload = results[0]
@@ -260,8 +254,9 @@ def run_ingest(
                     ["ticker", "ts", "open", "high", "low", "close", "volume", "source"],
                 )
 
+                rows_prices = 1
+
                 # fundamentals
-                fundamentals_records = []
                 fundamentals_records += _extract_statement_records(
                     ticker,
                     payload.get("financialData"),
@@ -332,21 +327,21 @@ def run_ingest(
                 con.execute("COMMIT")
             except Exception as exc:
                 con.execute("ROLLBACK")
-                _log("erro", "Falha ao escrever no DuckDB", ticker=ticker, detalhe=str(exc))
+                log_error("etl_ticker", ticker=ticker, error=str(exc))
                 continue
 
-        _log(
-            "info",
-            "Ticker ingerido",
+        log_info(
+            "etl_ticker",
             ticker=ticker,
-            snapshot_registros=len(payload),
-            fundamentals=len(fundamentals_records),
+            rows_fundamentals=len(fundamentals_records),
+            rows_prices=rows_prices,
+            duration_ms=int((time.time() - ticker_start) * 1000),
         )
 
     if con and not missing and write_snapshot:
         snapshot_date = fetched_at.strftime("%Y%m%d")
         _write_snapshot(con, config.snapshot_dir, snapshot_date)
-        _log("info", "Snapshot gerado", data=snapshot_date, destino=config.snapshot_dir)
+        log_info("etl_snapshot", date=snapshot_date, dest=config.snapshot_dir)
 
     if con:
         con.close()

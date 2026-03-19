@@ -10,6 +10,7 @@ python -m py_compile \
   get_info_yfinance.py \
   get_info_crawl4ai.py \
   src/b3_core/config.py \
+  src/b3_core/log.py \
   src/b3_storage/db.py \
   src/b3_storage/schema.py \
   src/b3_etl/brapi.py \

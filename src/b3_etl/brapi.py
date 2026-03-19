@@ -1,4 +1,5 @@
 import json
+import time
 import urllib.parse
 import urllib.request
 
@@ -34,12 +35,18 @@ def fetch_quote(
         },
         method="GET",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            payload = response.read().decode("utf-8")
-        data = json.loads(payload)
-    except Exception as exc:
-        raise BrapiError(f"Falha ao consultar BRAPI para {ticker}: {exc}") from exc
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                payload = response.read().decode("utf-8")
+            data = json.loads(payload)
+            break
+        except Exception as exc:
+            if attempt < max_attempts - 1:
+                time.sleep(2)
+            else:
+                raise BrapiError(f"Falha ao consultar BRAPI para {ticker}: {exc}") from exc
 
     if not isinstance(data, dict) or "results" not in data:
         raise BrapiError(f"Resposta BRAPI invalida para {ticker}")

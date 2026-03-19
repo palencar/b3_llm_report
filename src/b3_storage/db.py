@@ -9,12 +9,13 @@ def connect(db_path: str, read_only: bool = False) -> duckdb.DuckDBPyConnection:
 
 def table_exists(con: duckdb.DuckDBPyConnection, table_name: str) -> bool:
     query = """
-        SELECT COUNT(*) 
+        SELECT COUNT(*)
         FROM information_schema.tables
         WHERE table_name = ?
     """
-    count = con.execute(query, [table_name]).fetchone()[0]
-    return count > 0
+    row = con.execute(query, [table_name]).fetchone()
+    count = row[0] if row else 0
+    return bool(count and count > 0)
 
 
 def missing_tables(con: duckdb.DuckDBPyConnection) -> list[str]:
