@@ -17,9 +17,14 @@ Fontes canônicas de setup e operação: `README.md` e `PRD - *.md`.
 - Variáveis de ambiente no `.env` (ver `README.md`).
 - Execução local: `python main.py <TICKER>`.
 
+## Git
+- Trabalhar localmente; **nunca fazer push para o repositório remoto**.
+- Branches de feature em `.worktrees/<nome>/`; merge em `main` localmente após validação.
+
 ## Validação
-- Não há suíte de testes dedicada.
-- Ao alterar código, rode `python -m py_compile` nos arquivos modificados ou execute o fluxo manual relevante.
+- Suíte de testes em `tests/`; rodar com `pytest tests/ -v`.
+- Validação sintática: `bash scripts/validate_python.sh`.
+- Ao alterar código, rodar os testes relevantes antes de commitar.
 
 ## Mudanças sensíveis
 - Para ajustes em prompts ou regras de análise, seguir: `baseline -> proposta -> benchmark no mesmo corpus -> decisão por métricas`.
