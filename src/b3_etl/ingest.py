@@ -412,6 +412,7 @@ def run_ingest(
                 log_error("etl_ticker", ticker=ticker, error=str(exc))
                 continue
 
+        # `continue` acima garante que só chegamos aqui se o bloco BRAPI foi commitado
         if con and not missing:
             _ingest_fundamentus_ticker(con, ticker, config, fetched_at)
 
