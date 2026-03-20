@@ -24,10 +24,10 @@ def test_parse_indicators_extrai_campos_principais():
     assert "P/L" in result
     assert "P/VP" in result
     assert "ROE" in result
-    assert "Div.Yield" in result
+    assert "Div. Yield" in result
     # valores são strings raw (conversão para float ocorre em _ingest_fundamentus_ticker)
     assert result["P/L"] == "8,53"
-    assert result["Div.Yield"] == "12,34%"
+    assert result["Div. Yield"] == "12,34%"
     for label in _FIELD_MAP:
         assert label in result, f"Campo ausente no parse: {label}"
 
