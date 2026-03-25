@@ -4,6 +4,8 @@ REQUIRED_TABLES = [
     "prices",
     "ratios",
     "raw_files",
+    "cvm_companies",
+    "cvm_statements",
 ]
 
 # DDL de referencia (nao executado automaticamente).
@@ -63,5 +65,27 @@ CREATE TABLE IF NOT EXISTS raw_files (
     checksum TEXT,
     size_bytes BIGINT,
     PRIMARY KEY (source, path)
+);
+
+-- cvm_companies
+CREATE TABLE IF NOT EXISTS cvm_companies (
+    cnpj        TEXT PRIMARY KEY,
+    name        TEXT,
+    cd_cvm      TEXT,
+    fetched_at  TIMESTAMP
+);
+
+-- cvm_statements
+CREATE TABLE IF NOT EXISTS cvm_statements (
+    cnpj         TEXT,
+    period       DATE,
+    report_type  TEXT,
+    account_code TEXT,
+    account_name TEXT,
+    value        DOUBLE,
+    currency     TEXT,
+    source       TEXT,
+    fetched_at   TIMESTAMP,
+    PRIMARY KEY (cnpj, period, report_type, account_code, source)
 );
 """.strip()
