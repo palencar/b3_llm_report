@@ -93,3 +93,43 @@ def test_parse_companies(tmp_path):
     petr = next(r for r in result if r["cnpj"] == "33.000.167/0001-01")
     assert petr["name"] == "PETROBRAS S.A."
     assert petr["cd_cvm"] == "9512"
+
+
+# ---------------------------------------------------------------------------
+# Task 2: parse_statements
+# ---------------------------------------------------------------------------
+
+from b3_etl.cvm import parse_statements
+from datetime import date
+
+
+def test_parse_statements_dfp(tmp_path):
+    """Extrai registros DFP, normaliza ESCALA_MOEDA=MIL e filtra PENÚLTIMO."""
+    zip_path = _make_dfp_zip(str(tmp_path))
+    result = parse_statements(zip_path, "cvm_dfp")
+
+    # Apenas ÚLTIMO: PETR4(1), PETR4(1.01), ITUB4(1), VALE3(1)  — sem PENÚLTIMO
+    assert len(result) == 4
+    petr_ativo = next(
+        r for r in result
+        if r["cnpj"] == "33.000.167/0001-01" and r["account_code"] == "1"
+    )
+    assert petr_ativo["report_type"] == "BPA"
+    assert petr_ativo["period"] == date(2024, 12, 31)
+    # 100000 × 1000 (MIL) = 100_000_000
+    assert petr_ativo["value"] == 100_000_000.0
+    assert petr_ativo["currency"] == "REAL"
+    assert petr_ativo["source"] == "cvm_dfp"
+    assert petr_ativo["account_name"] == "Ativo Total"
+
+
+def test_parse_statements_filtra_penultimo(tmp_path):
+    """ORDEM_EXERC='PENÚLTIMO' não é incluído no resultado."""
+    zip_path = _make_dfp_zip(str(tmp_path))
+    result = parse_statements(zip_path, "cvm_dfp")
+    # O CSV tem 5 linhas ÚLTIMO e 1 PENÚLTIMO → resultado deve ter 4 (1 PETR4 account_code=1,
+    # 1 PETR4 account_code=1.01, 1 ITUB4, 1 VALE3)
+    penultimos = [r for r in result if r["account_code"] == "1" and r["cnpj"] == "33.000.167/0001-01"]
+    # Deve haver exatamente 1 (o ÚLTIMO), não 2
+    assert len(penultimos) == 1
+    assert penultimos[0]["value"] == 100_000_000.0

@@ -48,6 +48,57 @@ def _extract_report_type(filename: str) -> str | None:
 # Public API
 # ---------------------------------------------------------------------------
 
+def parse_statements(zip_path: str, source: str) -> list[dict]:
+    """Parse DFP/ITR ZIP. Returns list of statement records.
+
+    Filters ORDEM_EXERC == 'ÚLTIMO'. Normalizes VL_CONTA by ESCALA_MOEDA.
+    period is returned as datetime.date.
+    """
+    result = []
+    with zipfile.ZipFile(zip_path) as zf:
+        for name in zf.namelist():
+            if not name.lower().endswith(".csv"):
+                continue
+            report_type = _extract_report_type(name)
+            if report_type is None:
+                continue
+            with zf.open(name) as raw:
+                reader = csv.DictReader(
+                    io.TextIOWrapper(raw, encoding="latin-1"), delimiter=";"
+                )
+                for row in reader:
+                    if row.get("ORDEM_EXERC", "").strip() != "ÚLTIMO":
+                        continue
+                    cnpj = row.get("CNPJ_CIA", "").strip()
+                    dt_refer = row.get("DT_REFER", "").strip()
+                    cd_conta = row.get("CD_CONTA", "").strip()
+                    ds_conta = row.get("DS_CONTA", "").strip()
+                    vl_conta = row.get("VL_CONTA", "").strip()
+                    moeda = row.get("MOEDA", "REAL").strip()
+                    escala = row.get("ESCALA_MOEDA", "UNIDADE").strip()
+                    if not cnpj or not dt_refer or not vl_conta:
+                        continue
+                    try:
+                        period = datetime.strptime(dt_refer, "%Y-%m-%d").date()
+                    except ValueError:
+                        continue
+                    try:
+                        value = float(vl_conta.replace(",", ".")) * _SCALE.get(escala, 1)
+                    except ValueError:
+                        continue
+                    result.append({
+                        "cnpj": cnpj,
+                        "period": period,
+                        "report_type": report_type,
+                        "account_code": cd_conta,
+                        "account_name": ds_conta,
+                        "value": value,
+                        "currency": moeda,
+                        "source": source,
+                    })
+    return result
+
+
 def parse_companies(zip_path: str) -> list[dict]:
     """Parse cia_aberta.zip. Returns list of {cnpj, name, cd_cvm}."""
     result = []
