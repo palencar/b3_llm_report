@@ -7,7 +7,7 @@ import re
 import time
 import urllib.request
 import zipfile
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from b3_core.config import Config
 from b3_core.log import log_info, log_error
@@ -265,6 +265,8 @@ def run_ingest_cvm(
                 existing = con.execute(
                     "SELECT cnpj, period, report_type, account_code"
                     " FROM cvm_statements WHERE source = 'cvm_dfp'"
+                    " AND period >= ? AND period < ?",
+                    [date(year, 1, 1), date(year + 1, 1, 1)],
                 ).fetchall()
                 existing_set = {(r[0], r[1], r[2], r[3]) for r in existing}
                 to_insert = [
