@@ -99,6 +99,14 @@ def test_load_statements_tipo_sem_dados_retorna_lista_vazia(tmp_path):
     con.close()
 
 
+def test_load_statements_tipos_vazio_retorna_dict_vazio(tmp_path):
+    con = _init_con(str(tmp_path / "t.duckdb"))
+    _seed_data(con)
+    result = _load_statements(con, "PETR4", 2022, 2024, [])
+    assert result == {}
+    con.close()
+
+
 def test_load_statements_campos_corretos(tmp_path):
     con = _init_con(str(tmp_path / "t.duckdb"))
     _seed_data(con)

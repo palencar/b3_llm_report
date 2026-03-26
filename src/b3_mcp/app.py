@@ -170,12 +170,13 @@ def _load_statements(
     ordered by period ASC, account_code ASC. Types without data return empty list."""
     if not types:
         return {}
-    placeholders = ", ".join("?" * len(types))
+    placeholders = ", ".join("?" * len(types))  # DuckDB does not support array binding; placeholders are '?' repeated, not user data
     query = f"""
         SELECT s.period, s.report_type, s.account_code, s.account_name,
                s.value, s.currency, s.source
         FROM cvm_statements s
         JOIN cvm_companies c ON c.cnpj = s.cnpj
+        -- ticker_map.cnpj is digits-only (normalized by parse_b3_results at ingest)
         JOIN ticker_map t    ON regexp_replace(c.cnpj, '[^0-9]', '', 'g') = t.cnpj
         WHERE t.ticker = ?
           AND s.report_type IN ({placeholders})
