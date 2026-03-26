@@ -18,6 +18,9 @@ cache = TTLCache()
 # índice lateral: ticker → última cache_key de fundamentals
 _ticker_fund_key: dict[str, str] = {}
 
+_DEFAULT_STATEMENT_TYPES = ["BPA", "BPP", "DRE", "DFC_MI", "DFC_MD"]
+_VALID_STATEMENT_TYPES = frozenset({"BPA", "BPP", "DRE", "DFC_MI", "DFC_MD", "DVA", "DMPL", "DRA"})
+
 
 def _is_stale(last_update, fund_ttl: int) -> bool:
     if last_update is None:
@@ -145,6 +148,63 @@ def _company_metadata(con, ticker: str) -> dict:
         "last_update_str": row[3].isoformat() if row[3] else None,  # string para resposta
         "source": row[4],
     }
+
+
+def _find_ticker_cnpj(con, ticker: str) -> str | None:
+    """Return cnpj_digits for ticker from ticker_map, or None if not found."""
+    row = con.execute(
+        "SELECT cnpj FROM ticker_map WHERE ticker = ? LIMIT 1",
+        [ticker],
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _load_statements(
+    con,
+    ticker: str,
+    from_year: int,
+    to_year: int,
+    types: list[str],
+) -> dict[str, list[dict]]:
+    """Return statements grouped by report_type. Each key maps to a list of records
+    ordered by period ASC, account_code ASC. Types without data return empty list."""
+    if not types:
+        return {}
+    placeholders = ", ".join("?" * len(types))
+    query = f"""
+        SELECT s.period, s.report_type, s.account_code, s.account_name,
+               s.value, s.currency, s.source
+        FROM cvm_statements s
+        JOIN cvm_companies c ON c.cnpj = s.cnpj
+        JOIN ticker_map t    ON regexp_replace(c.cnpj, '[^0-9]', '', 'g') = t.cnpj
+        WHERE t.ticker = ?
+          AND s.report_type IN ({placeholders})
+          AND EXTRACT(year FROM s.period) BETWEEN ? AND ?
+        ORDER BY s.report_type, s.period, s.account_code
+    """
+    params: list = [ticker] + types + [from_year, to_year]
+    rows = con.execute(query, params).fetchall()
+    result: dict[str, list[dict]] = {t: [] for t in types}
+    for period, report_type, account_code, account_name, value, currency, source in rows:
+        if report_type in result:
+            result[report_type].append({
+                "period": period.isoformat(),
+                "account_code": account_code,
+                "account_name": account_name,
+                "value": value,
+                "currency": currency,
+                "source": source,
+            })
+    return result
+
+
+def _statements_stale(con, fund_ttl: int) -> bool:
+    """Return True if cvm_dfp/cvm_itr data in raw_files is older than fund_ttl seconds."""
+    row = con.execute(
+        "SELECT MAX(fetched_at) FROM raw_files WHERE source IN ('cvm_dfp', 'cvm_itr')"
+    ).fetchone()
+    last_update = row[0] if row else None
+    return _is_stale(last_update, fund_ttl)
 
 
 @app.get("/v1/health")
