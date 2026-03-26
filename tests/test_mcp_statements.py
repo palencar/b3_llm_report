@@ -151,3 +151,187 @@ def test_statements_stale_true_com_dados_antigos(tmp_path):
     )
     assert _statements_stale(con, 86400) is True
     con.close()
+
+
+# ---------------------------------------------------------------------------
+# Fixtures de rota
+# ---------------------------------------------------------------------------
+
+def _auth():
+    return {"Authorization": "Bearer test-token"}
+
+
+@pytest.fixture(autouse=True)
+def set_auth_token(monkeypatch):
+    monkeypatch.setenv("AUTH_TOKEN", "test-token")
+
+
+def _mock_config():
+    m = MagicMock()
+    m.auth_token = "test-token"
+    m.fund_ttl = 86400
+    m.db_path = "/fake/path.duckdb"
+    return m
+
+
+def _mock_con(max_year=2024):
+    con = MagicMock()
+    con.execute.return_value.fetchone.return_value = [max_year]
+    return con
+
+
+_GROUPED_STUB = {
+    "BPA": [{"period": "2024-12-31", "account_code": "1",
+             "account_name": "Ativo Total", "value": 1e9,
+             "currency": "REAL", "source": "cvm_dfp"}],
+    "BPP": [], "DRE": [], "DFC_MI": [], "DFC_MD": [],
+}
+
+# ---------------------------------------------------------------------------
+# Testes de rota
+# ---------------------------------------------------------------------------
+
+def test_statements_retorna_dados_agrupados():
+    from b3_mcp.cache import TTLCache
+    mock_con = _mock_con()
+    with patch("b3_mcp.app.os.path.exists", return_value=True), \
+         patch("b3_mcp.app.connect", return_value=mock_con), \
+         patch("b3_mcp.app.missing_tables", return_value=[]), \
+         patch("b3_mcp.app._find_ticker_cnpj", return_value="33000167000101"), \
+         patch("b3_mcp.app._load_statements", return_value=_GROUPED_STUB), \
+         patch("b3_mcp.app._statements_stale", return_value=False), \
+         patch("b3_mcp.app.cache", TTLCache()), \
+         patch("b3_mcp.app.config", _mock_config()):
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.get("/v1/statements/PETR4", headers=_auth())
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ticker"] == "PETR4"
+    assert "BPA" in data["statements"]
+    assert len(data["statements"]["BPA"]) == 1
+    assert data["statements"]["BPA"][0]["account_name"] == "Ativo Total"
+    assert data["metadata"]["cnpj"] == "33000167000101"
+    assert data["metadata"]["stale"] is False
+    assert "2024-12-31" in data["metadata"]["periods"]
+
+
+def test_statements_ticker_nao_encontrado():
+    from b3_mcp.cache import TTLCache
+    mock_con = _mock_con()
+    with patch("b3_mcp.app.os.path.exists", return_value=True), \
+         patch("b3_mcp.app.connect", return_value=mock_con), \
+         patch("b3_mcp.app.missing_tables", return_value=[]), \
+         patch("b3_mcp.app._find_ticker_cnpj", return_value=None), \
+         patch("b3_mcp.app.cache", TTLCache()), \
+         patch("b3_mcp.app.config", _mock_config()):
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.get("/v1/statements/XXXX3", headers=_auth())
+
+    assert response.status_code == 404
+
+
+def test_statements_sem_dados_cvm_retorna_vazio():
+    """Ticker existe em ticker_map mas não há linhas em cvm_statements."""
+    from b3_mcp.cache import TTLCache
+    mock_con = MagicMock()
+    # max_year query retorna None (sem dados CVM)
+    mock_con.execute.return_value.fetchone.return_value = [None]
+    with patch("b3_mcp.app.os.path.exists", return_value=True), \
+         patch("b3_mcp.app.connect", return_value=mock_con), \
+         patch("b3_mcp.app.missing_tables", return_value=[]), \
+         patch("b3_mcp.app._find_ticker_cnpj", return_value="33000167000101"), \
+         patch("b3_mcp.app._statements_stale", return_value=True), \
+         patch("b3_mcp.app.cache", TTLCache()), \
+         patch("b3_mcp.app.config", _mock_config()):
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.get("/v1/statements/PETR4", headers=_auth())
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["statements"]["BPA"] == []
+    assert data["metadata"]["periods"] == []
+    assert data["metadata"]["stale"] is True
+
+
+def test_statements_filtro_types():
+    """?types=BPA retorna apenas BPA na resposta."""
+    from b3_mcp.cache import TTLCache
+    grouped_bpa_only = {"BPA": [{"period": "2024-12-31", "account_code": "1",
+                                  "account_name": "Ativo Total", "value": 1e9,
+                                  "currency": "REAL", "source": "cvm_dfp"}]}
+    mock_con = _mock_con()
+    with patch("b3_mcp.app.os.path.exists", return_value=True), \
+         patch("b3_mcp.app.connect", return_value=mock_con), \
+         patch("b3_mcp.app.missing_tables", return_value=[]), \
+         patch("b3_mcp.app._find_ticker_cnpj", return_value="33000167000101"), \
+         patch("b3_mcp.app._load_statements", return_value=grouped_bpa_only) as mock_load, \
+         patch("b3_mcp.app._statements_stale", return_value=False), \
+         patch("b3_mcp.app.cache", TTLCache()), \
+         patch("b3_mcp.app.config", _mock_config()):
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.get("/v1/statements/PETR4?types=BPA", headers=_auth())
+
+    assert response.status_code == 200
+    # Verifica que _load_statements foi chamado com types=["BPA"]
+    call_args = mock_load.call_args
+    assert call_args[0][4] == ["BPA"]   # 5º argumento posicional: types
+
+
+def test_statements_filtro_periodo():
+    """?from=2022&to=2023 passa from_year=2022, to_year=2023 para _load_statements."""
+    from b3_mcp.cache import TTLCache
+    grouped_stub = {"BPA": [], "BPP": [], "DRE": [], "DFC_MI": [], "DFC_MD": []}
+    mock_con = _mock_con()
+    with patch("b3_mcp.app.os.path.exists", return_value=True), \
+         patch("b3_mcp.app.connect", return_value=mock_con), \
+         patch("b3_mcp.app.missing_tables", return_value=[]), \
+         patch("b3_mcp.app._find_ticker_cnpj", return_value="33000167000101"), \
+         patch("b3_mcp.app._load_statements", return_value=grouped_stub) as mock_load, \
+         patch("b3_mcp.app._statements_stale", return_value=False), \
+         patch("b3_mcp.app.cache", TTLCache()), \
+         patch("b3_mcp.app.config", _mock_config()):
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.get("/v1/statements/PETR4?from=2022&to=2023", headers=_auth())
+
+    assert response.status_code == 200
+    call_args = mock_load.call_args
+    assert call_args[0][2] == 2022   # from_year
+    assert call_args[0][3] == 2023   # to_year
+
+
+def test_statements_ano_invalido_retorna_400():
+    """?from=abc ou ?to=xyz retornam 400."""
+    from b3_mcp.cache import TTLCache
+    mock_con = _mock_con()
+    with patch("b3_mcp.app.os.path.exists", return_value=True), \
+         patch("b3_mcp.app.connect", return_value=mock_con), \
+         patch("b3_mcp.app.missing_tables", return_value=[]), \
+         patch("b3_mcp.app._find_ticker_cnpj", return_value="33000167000101"), \
+         patch("b3_mcp.app.cache", TTLCache()), \
+         patch("b3_mcp.app.config", _mock_config()):
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.get("/v1/statements/PETR4?from=abc", headers=_auth())
+
+    assert response.status_code == 400
+
+
+def test_statements_cache_evita_segunda_query():
+    """Segunda chamada idêntica usa cache e não invoca _load_statements."""
+    from b3_mcp.cache import TTLCache
+    grouped_stub = {"BPA": [], "BPP": [], "DRE": [], "DFC_MI": [], "DFC_MD": []}
+    shared_cache = TTLCache()
+    mock_con = _mock_con()
+    with patch("b3_mcp.app.os.path.exists", return_value=True), \
+         patch("b3_mcp.app.connect", return_value=mock_con), \
+         patch("b3_mcp.app.missing_tables", return_value=[]), \
+         patch("b3_mcp.app._find_ticker_cnpj", return_value="33000167000101"), \
+         patch("b3_mcp.app._load_statements", return_value=grouped_stub) as mock_load, \
+         patch("b3_mcp.app._statements_stale", return_value=False), \
+         patch("b3_mcp.app.cache", shared_cache), \
+         patch("b3_mcp.app.config", _mock_config()):
+        client = TestClient(app, raise_server_exceptions=False)
+        client.get("/v1/statements/PETR4?from=2022&to=2024", headers=_auth())
+        client.get("/v1/statements/PETR4?from=2022&to=2024", headers=_auth())
+
+    assert mock_load.call_count == 1   # apenas 1 chamada, a segunda usou cache

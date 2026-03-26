@@ -438,3 +438,92 @@ def metadata(
         ]
     con.close()
     return {"ticker": ticker, "company": meta, "raw_files": raw}
+
+
+@app.get("/v1/statements/{ticker}")
+def statements(
+    ticker: str,
+    from_year: Optional[str] = Query(default=None, alias="from"),
+    to_year: Optional[str] = Query(default=None, alias="to"),
+    types: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+) -> dict:
+    _require_auth(authorization)
+
+    # Parse types — ignora valores inválidos; se nenhum válido, usa default
+    requested = [t.strip().upper() for t in (types or "").split(",") if t.strip()]
+    type_list = [t for t in requested if t in _VALID_STATEMENT_TYPES] or _DEFAULT_STATEMENT_TYPES[:]
+
+    # Parse year params
+    fy: Optional[int] = None
+    ty: Optional[int] = None
+    if from_year:
+        try:
+            fy = int(from_year)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="from deve ser um ano (YYYY).")
+    if to_year:
+        try:
+            ty = int(to_year)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="to deve ser um ano (YYYY).")
+
+    con = _get_db()
+
+    # 404 se ticker não está em ticker_map
+    cnpj_digits = _find_ticker_cnpj(con, ticker)
+    if cnpj_digits is None:
+        con.close()
+        raise HTTPException(status_code=404, detail=f"Ticker {ticker!r} não encontrado.")
+
+    # Determina intervalo padrão: 3 anos a partir do máximo disponível
+    if fy is None or ty is None:
+        row = con.execute(
+            """
+            SELECT MAX(EXTRACT(year FROM s.period))
+            FROM cvm_statements s
+            JOIN cvm_companies c ON c.cnpj = s.cnpj
+            JOIN ticker_map t    ON regexp_replace(c.cnpj, '[^0-9]', '', 'g') = t.cnpj
+            WHERE t.ticker = ?
+            """,
+            [ticker],
+        ).fetchone()
+        max_year = int(row[0]) if row and row[0] is not None else None
+        if max_year is None:
+            # Ticker existe mas não há dados CVM
+            stale = _statements_stale(con, config.fund_ttl)
+            con.close()
+            return {
+                "ticker": ticker,
+                "statements": {t: [] for t in type_list},
+                "metadata": {"cnpj": cnpj_digits, "periods": [], "stale": stale},
+            }
+        if fy is None:
+            fy = max_year - 2
+        if ty is None:
+            ty = max_year
+
+    cache_key = f"stmt:{ticker}:{fy}:{ty}:{','.join(sorted(type_list))}"
+    cached = cache.get(cache_key)
+    if cached:
+        con.close()
+        return cached
+
+    grouped = _load_statements(con, ticker, fy, ty, type_list)
+    stale = _statements_stale(con, config.fund_ttl)
+
+    all_periods = sorted({rec["period"] for recs in grouped.values() for rec in recs})
+
+    response = {
+        "ticker": ticker,
+        "statements": grouped,
+        "metadata": {
+            "cnpj": cnpj_digits,
+            "periods": all_periods,
+            "stale": stale,
+        },
+    }
+
+    cache.set(cache_key, response, config.fund_ttl)
+    con.close()
+    return response
