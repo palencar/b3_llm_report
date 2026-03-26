@@ -80,3 +80,72 @@ def test_parse_b3_results():
     # CNPJ com pontuação também é normalizado
     vale = next(r for r in result if r["ticker"] == "VALE3")
     assert vale["cnpj"] == "33592510000103"
+
+
+# ---------------------------------------------------------------------------
+# Task 2: fetch_b3_page + run_build_ticker_map
+# ---------------------------------------------------------------------------
+
+def test_run_build_ticker_map_popula_tabela(tmp_path):
+    """run_build_ticker_map deve gravar ticker_map com registros corretos."""
+    from b3_etl.ticker_map import run_build_ticker_map
+    from b3_storage.db import connect
+
+    config = _make_config(str(tmp_path))
+    with patch("b3_etl.ticker_map.fetch_b3_page", side_effect=_fake_fetch):
+        rc = run_build_ticker_map(config=config)
+    assert rc == 0
+
+    con = connect(config.db_path, read_only=True)
+    count = con.execute("SELECT COUNT(*) FROM ticker_map").fetchone()[0]
+    tickers = {r[0] for r in con.execute("SELECT ticker FROM ticker_map").fetchall()}
+    con.close()
+
+    # PETR4, PETR3 (página 1) + VALE3 (página 2) = 3; SEM TICKER e SEM CNPJ ignorados
+    assert count == 3
+    assert "PETR4" in tickers
+    assert "PETR3" in tickers
+    assert "VALE3" in tickers
+
+
+def test_run_build_ticker_map_falha_rede(tmp_path):
+    """OSError na página 2 → rc=0, dados da página 1 gravados."""
+    from b3_etl.ticker_map import run_build_ticker_map
+    from b3_storage.db import connect
+
+    config = _make_config(str(tmp_path))
+
+    def _fake_page2_fails(page: int, page_size: int = 120, timeout: int = 30) -> dict:
+        if page == 1:
+            return _FAKE_PAGE_1  # totalPages=2
+        raise OSError("timeout")
+
+    with patch("b3_etl.ticker_map.fetch_b3_page", side_effect=_fake_page2_fails):
+        rc = run_build_ticker_map(config=config)
+    assert rc == 0
+
+    con = connect(config.db_path, read_only=True)
+    count = con.execute("SELECT COUNT(*) FROM ticker_map").fetchone()[0]
+    tickers = {r[0] for r in con.execute("SELECT ticker FROM ticker_map").fetchall()}
+    con.close()
+
+    # Apenas PETR4 e PETR3 (página 1); VALE3 não gravado (página 2 falhou)
+    assert count == 2
+    assert "PETR4" in tickers
+    assert "PETR3" in tickers
+
+
+def test_run_build_ticker_map_idempotente(tmp_path):
+    """Segunda execução produz o mesmo resultado sem duplicatas."""
+    from b3_etl.ticker_map import run_build_ticker_map
+    from b3_storage.db import connect
+
+    config = _make_config(str(tmp_path))
+    with patch("b3_etl.ticker_map.fetch_b3_page", side_effect=_fake_fetch):
+        run_build_ticker_map(config=config)
+        run_build_ticker_map(config=config)
+
+    con = connect(config.db_path, read_only=True)
+    count = con.execute("SELECT COUNT(*) FROM ticker_map").fetchone()[0]
+    con.close()
+    assert count == 3  # mesmo resultado, sem duplicatas
