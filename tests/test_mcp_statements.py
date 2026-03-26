@@ -316,6 +316,28 @@ def test_statements_ano_invalido_retorna_400():
     assert response.status_code == 400
 
 
+def test_statements_types_invalidos_usa_default():
+    """?types=INVALID silently falls back to default types."""
+    from b3_mcp.cache import TTLCache
+    grouped_stub = {"BPA": [], "BPP": [], "DRE": [], "DFC_MI": [], "DFC_MD": []}
+    mock_con = _mock_con()
+    with patch("b3_mcp.app.os.path.exists", return_value=True), \
+         patch("b3_mcp.app.connect", return_value=mock_con), \
+         patch("b3_mcp.app.missing_tables", return_value=[]), \
+         patch("b3_mcp.app._find_ticker_cnpj", return_value="33000167000101"), \
+         patch("b3_mcp.app._load_statements", return_value=grouped_stub) as mock_load, \
+         patch("b3_mcp.app._statements_stale", return_value=False), \
+         patch("b3_mcp.app.cache", TTLCache()), \
+         patch("b3_mcp.app.config", _mock_config()):
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.get("/v1/statements/PETR4?types=INVALID", headers=_auth())
+
+    assert response.status_code == 200
+    # Should fall back to 5 default types
+    call_args = mock_load.call_args
+    assert call_args[0][4] == ["BPA", "BPP", "DRE", "DFC_MI", "DFC_MD"]
+
+
 def test_statements_cache_evita_segunda_query():
     """Segunda chamada idêntica usa cache e não invoca _load_statements."""
     from b3_mcp.cache import TTLCache
