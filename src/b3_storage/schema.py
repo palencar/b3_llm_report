@@ -6,6 +6,7 @@ REQUIRED_TABLES = [
     "raw_files",
     "cvm_companies",
     "cvm_statements",
+    "ticker_map",
 ]
 
 # DDL de referencia (nao executado automaticamente).
@@ -87,5 +88,14 @@ CREATE TABLE IF NOT EXISTS cvm_statements (
     source       TEXT,
     fetched_at   TIMESTAMP,
     PRIMARY KEY (cnpj, period, report_type, account_code, source)
+);
+
+-- ticker_map
+CREATE TABLE IF NOT EXISTS ticker_map (
+    cnpj       TEXT,
+    ticker     TEXT,
+    name       TEXT,
+    updated_at TIMESTAMP,
+    PRIMARY KEY (cnpj, ticker)
 );
 """.strip()
