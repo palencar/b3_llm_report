@@ -1,8 +1,11 @@
 """Source CVM: busca demonstrativos oficiais do DuckDB para o relatório LLM."""
+import logging
 import os
 from collections import defaultdict
 
 from b3_storage.db import connect
+
+_logger = logging.getLogger(__name__)
 
 
 _TYPE_LABELS = {
@@ -65,7 +68,8 @@ def get_cvm_data(ticker: str, db_path: str) -> str:
         return ""
     try:
         con = connect(db_path, read_only=True)
-    except Exception:
+    except Exception as e:
+        _logger.warning("CVM connect error for db_path=%s: %s", db_path, e)
         return ""
     try:
         row = con.execute(
@@ -79,7 +83,8 @@ def get_cvm_data(ticker: str, db_path: str) -> str:
         max_year = max(_extract_year(r[0]) for r in rows)
         rows = [r for r in rows if _extract_year(r[0]) >= max_year - 2]
         return _build_text(ticker, rows)
-    except Exception:
+    except Exception as e:
+        _logger.warning("CVM query error for ticker=%s: %s", ticker, e)
         return ""
     finally:
         con.close()

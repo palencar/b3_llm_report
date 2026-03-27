@@ -4,7 +4,7 @@ def prepare_llm_investment_analysis_request(
     analysis_date: str,
     cvm_info: str = "",
 ) -> str:
-    cvm_section = f"\n#### Dados CVM (Demonstrativos Oficiais)\n{cvm_info}" if cvm_info else ""
+    cvm_section = f"\n#### Dados CVM (Demonstrativos Oficiais)\n{cvm_info}\n" if cvm_info else ""
     return f"""# Análise de Investimento
 Data da Análise: {analysis_date} (YYYY-MM-DD)
 
