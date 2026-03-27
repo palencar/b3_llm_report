@@ -2,7 +2,9 @@ def prepare_llm_investment_analysis_request(
     stock_info: str,
     complementary_info: str,
     analysis_date: str,
+    cvm_info: str = "",
 ) -> str:
+    cvm_section = f"\n#### Dados CVM (Demonstrativos Oficiais)\n{cvm_info}" if cvm_info else ""
     return f"""# Análise de Investimento
 Data da Análise: {analysis_date} (YYYY-MM-DD)
 
@@ -59,7 +61,7 @@ Você é um analista financeiro especializado em ações brasileiras. Forneça u
 
 #### Informações Complementares
 {complementary_info}
-
+{cvm_section}
 ### Disclaimer
 - Esta análise é baseada em dados disponíveis até a data atual
 - Recomenda-se sempre complementar com análise própria e consulta a especialistas

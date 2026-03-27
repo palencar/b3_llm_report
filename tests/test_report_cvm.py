@@ -97,3 +97,27 @@ def test_get_cvm_data_ticker_nao_encontrado(tmp_path):
 
 def test_get_cvm_data_db_ausente(tmp_path):
     assert get_cvm_data("PETR4", str(tmp_path / "nao_existe.duckdb")) == ""
+
+
+from b3_report.prompts import prepare_llm_investment_analysis_request
+
+
+def test_prompt_inclui_secao_cvm():
+    prompt = prepare_llm_investment_analysis_request(
+        stock_info="dados yf",
+        complementary_info="dados fund",
+        analysis_date="2026-03-26",
+        cvm_info="Demonstrativos CVM Oficiais — PETR4\nAtivo Total...",
+    )
+    assert "#### Dados CVM (Demonstrativos Oficiais)" in prompt
+    assert "Demonstrativos CVM Oficiais — PETR4" in prompt
+
+
+def test_prompt_omite_secao_cvm():
+    prompt = prepare_llm_investment_analysis_request(
+        stock_info="dados yf",
+        complementary_info="dados fund",
+        analysis_date="2026-03-26",
+        cvm_info="",
+    )
+    assert "#### Dados CVM" not in prompt

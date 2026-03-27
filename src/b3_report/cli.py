@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from b3_core.config import load_config
 from b3_report.llm import get_investment_analysis
 from b3_report.prompts import prepare_llm_investment_analysis_request
+from b3_report.sources.cvm import get_cvm_data
 from b3_report.sources.fundamentus import get_complementary_data
 from b3_report.sources.yfinance import get_yfinance_data
 
@@ -18,10 +19,12 @@ def run_report(symbol: str) -> str:
 
     yfinance_report = get_yfinance_data(f"{normalized_symbol}.SA")
     complementary_report = get_complementary_data(normalized_symbol)
+    cvm_report = get_cvm_data(normalized_symbol, config.db_path)
     llm_prompt = prepare_llm_investment_analysis_request(
         yfinance_report,
         complementary_report,
         analysis_date,
+        cvm_info=cvm_report,
     )
     analysis = get_investment_analysis(
         llm_prompt,
