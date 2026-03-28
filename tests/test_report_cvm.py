@@ -21,7 +21,7 @@ def _seed_data(con) -> None:
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     con.execute(
         "INSERT INTO ticker_map VALUES (?, ?, ?, ?)",
-        ["33000167000101", "PETR4", "PETROBRAS", now],
+        ["33000167000101", "PETR", "PETROBRAS", now],
     )
     con.execute(
         "INSERT INTO cvm_companies VALUES (?, ?, ?, ?)",

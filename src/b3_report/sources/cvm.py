@@ -62,6 +62,16 @@ def _build_text(ticker: str, rows: list) -> str:
     return "\n".join(lines).strip()
 
 
+def _normalize_ticker(ticker: str) -> str:
+    """Strip trailing digit from B3 ticker (e.g. 'PETR4' → 'PETR', 'VALE3' → 'VALE').
+
+    The B3 listing API returns base codes without the share-class suffix.
+    """
+    if ticker and ticker[-1].isdigit():
+        return ticker[:-1]
+    return ticker
+
+
 def get_cvm_data(ticker: str, db_path: str) -> str:
     """Return formatted CVM statements for ticker, or '' if unavailable."""
     if not os.path.exists(db_path):
@@ -71,13 +81,14 @@ def get_cvm_data(ticker: str, db_path: str) -> str:
     except Exception as e:
         _logger.warning("CVM connect error for db_path=%s: %s", db_path, e)
         return ""
+    lookup_ticker = _normalize_ticker(ticker)
     try:
         row = con.execute(
-            "SELECT 1 FROM ticker_map WHERE ticker = ? LIMIT 1", [ticker]
+            "SELECT 1 FROM ticker_map WHERE ticker = ? LIMIT 1", [lookup_ticker]
         ).fetchone()
         if row is None:
             return ""
-        rows = con.execute(_QUERY, [ticker]).fetchall()
+        rows = con.execute(_QUERY, [lookup_ticker]).fetchall()
         if not rows:
             return ""
         max_year = max(_extract_year(r[0]) for r in rows)
