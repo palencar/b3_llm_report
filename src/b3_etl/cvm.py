@@ -9,6 +9,8 @@ import urllib.request
 import zipfile
 from datetime import date, datetime, timezone
 
+import pandas as pd
+
 from b3_core.config import Config
 from b3_core.log import log_info, log_error
 from b3_storage.db import connect, missing_tables
@@ -236,17 +238,21 @@ def run_ingest_cvm(
         log_info("etl_cvm_zip", type="dfp", year=year, rows=len(dfp_records), size_bytes=size_bytes)
         if con and dfp_records:
             try:
+                df = pd.DataFrame(dfp_records)
+                df["fetched_at"] = fetched_at
                 con.execute("BEGIN")
-                con.executemany(
-                    "INSERT OR REPLACE INTO cvm_statements"
-                    " (cnpj, period, report_type, account_code, account_name,"
-                    "  value, currency, source, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    [
-                        (r["cnpj"], r["period"], r["report_type"], r["account_code"],
-                         r["account_name"], r["value"], r["currency"], r["source"], fetched_at)
-                        for r in dfp_records
-                    ],
-                )
+                con.register("_staging", df)
+                try:
+                    con.execute(
+                        "INSERT OR REPLACE INTO cvm_statements"
+                        " (cnpj, period, report_type, account_code, account_name,"
+                        "  value, currency, source, fetched_at)"
+                        " SELECT cnpj, period::DATE, report_type, account_code, account_name,"
+                        "        value, currency, source, fetched_at"
+                        " FROM _staging"
+                    )
+                finally:
+                    con.unregister("_staging")
                 con.execute(
                     "INSERT OR REPLACE INTO raw_files"
                     " (source, path, fetched_at, checksum, size_bytes) VALUES (?, ?, ?, ?, ?)",
@@ -288,16 +294,20 @@ def run_ingest_cvm(
                 try:
                     con.execute("BEGIN")
                     if to_insert:
-                        con.executemany(
-                            "INSERT OR REPLACE INTO cvm_statements"
-                            " (cnpj, period, report_type, account_code, account_name,"
-                            "  value, currency, source, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            [
-                                (r["cnpj"], r["period"], r["report_type"], r["account_code"],
-                                 r["account_name"], r["value"], r["currency"], r["source"], fetched_at)
-                                for r in to_insert
-                            ],
-                        )
+                        df_itr = pd.DataFrame(to_insert)
+                        df_itr["fetched_at"] = fetched_at
+                        con.register("_staging_itr", df_itr)
+                        try:
+                            con.execute(
+                                "INSERT OR REPLACE INTO cvm_statements"
+                                " (cnpj, period, report_type, account_code, account_name,"
+                                "  value, currency, source, fetched_at)"
+                                " SELECT cnpj, period::DATE, report_type, account_code, account_name,"
+                                "        value, currency, source, fetched_at"
+                                " FROM _staging_itr"
+                            )
+                        finally:
+                            con.unregister("_staging_itr")
                     con.execute(
                         "INSERT OR REPLACE INTO raw_files"
                         " (source, path, fetched_at, checksum, size_bytes) VALUES (?, ?, ?, ?, ?)",
