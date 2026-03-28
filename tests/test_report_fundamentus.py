@@ -22,7 +22,7 @@ _FAKE_ROW = {
     "vlr_ind_p_sobre_l": 6.05,
     "vlr_ind_p_sobre_vp": 1.20,
     "vlr_ind_p_sobre_ebit": 4.10,
-    "vlr_ind_psr": 0.90,
+    "vlr_ind_psr": None,
     "vlr_ind_p_sobre_ativ": 0.50,
     "vlr_ind_p_sobre_cap_giro": math.nan,
     "vlr_ind_p_sobre_ativ_circ_liq": math.nan,
@@ -89,6 +89,7 @@ def test_get_complementary_data_omite_nan():
         result = get_complementary_data("PETR4")
     assert "P/Cap.Giro" not in result
     assert "P/Ativ.Circ.Liq" not in result
+    assert "PSR" not in result
 
 
 def test_get_complementary_data_excecao():

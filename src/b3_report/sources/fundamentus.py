@@ -1,6 +1,5 @@
 """Source Fundamentus: indicadores de mercado via pynvest."""
 import logging
-import math
 
 import pandas as pd
 from pynvest.scrappers.fundamentus import Fundamentus
@@ -80,8 +79,11 @@ def _val(row: pd.Series, col: str):
     if col not in row.index:
         return None
     v = row[col]
-    if isinstance(v, float) and math.isnan(v):
-        return None
+    try:
+        if pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass  # pd.isna raises on array-like values
     return str(v)
 
 
