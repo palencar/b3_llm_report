@@ -1,139 +1,119 @@
-import asyncio
-import json
-import os
-from typing import Optional
+"""Source Fundamentus: indicadores de mercado via pynvest."""
+import logging
+import math
 
-try:
-    from crawl4ai import AsyncWebCrawler
-    from crawl4ai.extraction_strategy import LLMExtractionStrategy
-except ImportError:  # pragma: no cover
-    AsyncWebCrawler = None  # type: ignore[assignment,misc]
-    LLMExtractionStrategy = None  # type: ignore[assignment,misc]
-from pydantic import BaseModel, Field
+import pandas as pd
+from pynvest.scrappers.fundamentus import Fundamentus
+
+_logger = logging.getLogger(__name__)
+
+_SECAO_MERCADO = [
+    ("Empresa", "nome_empresa"),
+    ("Setor", "nome_setor"),
+    ("Subsetor", "nome_subsetor"),
+    ("Cotação", "vlr_cot"),
+    ("Data Últ. Cotação", "dt_ult_cot"),
+    ("Mín. 52 sem.", "vlr_min_52_sem"),
+    ("Máx. 52 sem.", "vlr_max_52_sem"),
+    ("Vol. Méd. 2m", "vol_med_neg_2m"),
+    ("Valor de Mercado", "vlr_mercado"),
+    ("Valor da Firma (EV)", "vlr_firma"),
+    ("Nº de Ações", "num_acoes"),
+    ("Últ. Balanço", "dt_ult_balanco_proc"),
+]
+
+_SECAO_MULTIPLOS = [
+    ("P/L", "vlr_ind_p_sobre_l"),
+    ("P/VP", "vlr_ind_p_sobre_vp"),
+    ("P/EBIT", "vlr_ind_p_sobre_ebit"),
+    ("PSR", "vlr_ind_psr"),
+    ("P/Ativo", "vlr_ind_p_sobre_ativ"),
+    ("P/Cap.Giro", "vlr_ind_p_sobre_cap_giro"),
+    ("P/Ativ.Circ.Liq", "vlr_ind_p_sobre_ativ_circ_liq"),
+    ("EV/EBITDA", "vlr_ind_ev_sobre_ebitda"),
+    ("EV/EBIT", "vlr_ind_ev_sobre_ebit"),
+    ("Div. Yield", "vlr_ind_div_yield"),
+    ("LPA", "vlr_ind_lpa"),
+    ("VPA", "vlr_ind_vpa"),
+]
+
+_SECAO_RENTABILIDADE = [
+    ("ROE", "vlr_ind_roe"),
+    ("ROIC", "vlr_ind_roic"),
+    ("Margem Bruta", "vlr_ind_margem_bruta"),
+    ("Margem EBIT", "vlr_ind_margem_ebit"),
+    ("Margem Líquida", "vlr_ind_margem_liq"),
+    ("EBIT/Ativo", "vlr_ind_ebit_sobre_ativo"),
+    ("Giro do Ativo", "vlr_ind_giro_ativos"),
+    ("Cresc. Rec. 5a", "pct_cresc_rec_liq_ult_5a"),
+]
+
+_SECAO_BALANCO_DRE = [
+    ("Ativo Total", "vlr_ativo"),
+    ("Disponibilidades", "vlr_disponibilidades"),
+    ("Ativo Circulante", "vlr_ativ_circulante"),
+    ("Dívida Bruta", "vlr_divida_bruta"),
+    ("Dívida Líquida", "vlr_divida_liq"),
+    ("Patrimônio Líquido", "vlr_patrim_liq"),
+    ("Liquidez Corrente", "vlr_liquidez_corr"),
+    ("Dív.Bruta/Patrim.", "vlr_ind_divida_bruta_sobre_patrim"),
+    ("Receita Líq. 12m", "vlr_receita_liq_ult_12m"),
+    ("EBIT 12m", "vlr_ebit_ult_12m"),
+    ("Lucro Líq. 12m", "vlr_lucro_liq_ult_12m"),
+    ("Receita Líq. 3m", "vlr_receita_liq_ult_3m"),
+    ("EBIT 3m", "vlr_ebit_ult_3m"),
+    ("Lucro Líq. 3m", "vlr_lucro_liq_ult_3m"),
+]
+
+_SECAO_OSCILACOES = [
+    ("Dia", "pct_var_dia"),
+    ("Mês", "pct_var_mes"),
+    ("30 dias", "pct_var_30d"),
+    ("12 meses", "pct_var_12m"),
+    ("Ano (a0)", "pct_var_ano_a0"),
+    ("Ano -1", "pct_var_ano_a1"),
+    ("Ano -2", "pct_var_ano_a2"),
+]
 
 
-class StockInfo(BaseModel):
-    papel: str = Field(..., description="Código da ação")
-    cotacao: str = Field(..., description="Cotação atual da ação")
-    tipo: str = Field(..., description="Tipo de ação")
-    data_ultima_cotacao: str = Field(..., description="Data da última cotação")
-    empresa: str = Field(..., description="Nome da empresa")
-    setor: str = Field(..., description="Setor da empresa")
-    subsetor: str = Field(..., description="Subsetor da empresa")
-    valor_mercado: str = Field(..., description="Valor de mercado")
-    valor_firma: str = Field(..., description="Valor da firma")
-    numero_acoes: str = Field(..., description="Número de ações")
-    oscilacoes: Optional[dict] = Field(None, description="Oscilações da ação")
-    indicadores_fundamentalistas: Optional[dict] = Field(None, description="Indicadores fundamentalistas")
-    balanco_patrimonial: Optional[dict] = Field(None, description="Dados do Balanço Patrimonial")
-    demonstrativos_resultados: Optional[dict] = Field(None, description="Demonstrativos de Resultados")
+def _val(row: pd.Series, col: str):
+    if col not in row.index:
+        return None
+    v = row[col]
+    if isinstance(v, float) and math.isnan(v):
+        return None
+    return str(v)
 
 
-async def extract_stock_info(url: str) -> str:
-    async with AsyncWebCrawler(verbose=True) as crawler:
-        result = await crawler.arun(
-            url=url,
-            word_count_threshold=1,
-            extraction_strategy=LLMExtractionStrategy(
-                provider=os.getenv("CRAWL4AI_MODEL_PROVIDER"),
-                url_base=os.getenv("CRAWL4AI_MODEL_URL_BASE"),
-                api_token=os.getenv("CRAWL4AI_MODEL_API_KEY"),
-                schema=StockInfo.schema(),
-                extraction_type="schema",
-                instruction="""Extraia todas as informações da página de ações, preenchendo todos os campos possíveis.
-                Organize as informações nos campos do modelo, incluindo:
-                - Informações básicas da ação
-                - Valor de mercado e da firma
-                - Oscilações
-                - Indicadores fundamentalistas
-                - Dados do Balanço Patrimonial
-                - Demonstrativos de Resultados
-
-                Certifique-se de incluir dados numéricos e textuais relevantes.
-                Use nomes claros nos campos extraídos, em especial indicadores_fundamentalistas.""",
-            ),
-            bypass_cache=True,
-        )
-        return result.extracted_content
+def _format_section(title: str, fields: list, row: pd.Series) -> str:
+    lines = [title]
+    for label, col in fields:
+        v = _val(row, col)
+        if v is not None:
+            lines.append(f"- {label}: {v}")
+    return "\n".join(lines) if len(lines) > 1 else ""
 
 
-def format_complementary_stock_info(stock_data: list) -> str:
-    if not stock_data or not isinstance(stock_data, list):
-        return "Nenhum dado disponível"
-
-    data = stock_data[0]
-
-    def format_currency(value):
-        try:
-            return f"R$ {float(str(value).replace('.', '').replace(',', '.')):,.2f}"
-        except (ValueError, TypeError):
-            return value
-
-    def safe_get(dictionary, key, default="N/A"):
-        return dictionary.get(key, default)
-
-    report = f"""Informações Complementares - {safe_get(data, 'papel', default='Ação')}
-
-Detalhes da Empresa
-- Empresa: {safe_get(data, 'empresa', default='N/A')}
-- Setor: {safe_get(data, 'setor', default='N/A')}
-- Subsetor: {safe_get(data, 'subsetor', default='N/A')}
-
-Cotação e Mercado
-- Cotação Atual: {safe_get(data, 'cotacao', default='N/A')}
-- Data Última Cotação: {safe_get(data, 'data_ultima_cotacao', default='N/A')}
-- Valor de Mercado: {format_currency(safe_get(data, 'valor_mercado', default=0))}
-- Número de Ações: {safe_get(data, 'numero_acoes', default='N/A')}
-
-Oscilações
-"""
-
-    oscilacoes = safe_get(data, "oscilacoes", default={})
-    for periodo, valor in oscilacoes.items():
-        report += f"- {periodo.replace('_', ' ').title()}: {valor}\n"
-
-    report += "\nIndicadores Fundamentalistas\n"
-    indicadores = safe_get(data, "indicadores_fundamentalistas", default={})
-    for indicador, valor in indicadores.items():
-        report += f"- {indicador.upper().replace('_', ' ')}: {valor}\n"
-
-    report += "\nBalanço Patrimonial\n"
-    balanco = safe_get(data, "balanco_patrimonial", default={})
-    for conta, valor in balanco.items():
-        report += f"- {conta.replace('_', ' ').title()}: {format_currency(valor)}\n"
-
-    report += "\nDemonstrativos de Resultados\n"
-    resultados = safe_get(data, "demonstrativos_resultados", default={})
-    periodos = {
-        "12 meses": [
-            "receita_liq_ultimos_12_meses",
-            "ebit_ultimos_12_meses",
-            "lucro_liq_ultimos_12_meses",
-        ],
-        "3 meses": [
-            "receita_liq_ultimos_3_meses",
-            "ebit_ultimos_3_meses",
-            "lucro_liq_ultimos_3_meses",
-        ],
-    }
-
-    for periodo, campos in periodos.items():
-        report += f"\nPeríodo: {periodo}\n"
-        for campo in campos:
-            nome_formatado = campo.replace("_", " ").replace("liq", "líquido").title()
-            report += f"- {nome_formatado}: {format_currency(resultados.get(campo, 'N/A'))}\n"
-
-    return report
+def _format(ticker: str, df: pd.DataFrame) -> str:
+    row = df.iloc[0]
+    sections = [
+        _format_section("Dados de Mercado", _SECAO_MERCADO, row),
+        _format_section("Múltiplos de Valuation", _SECAO_MULTIPLOS, row),
+        _format_section("Rentabilidade", _SECAO_RENTABILIDADE, row),
+        _format_section("Balanço e DRE (Fundamentus)", _SECAO_BALANCO_DRE, row),
+        _format_section("Oscilações", _SECAO_OSCILACOES, row),
+    ]
+    body = "\n\n".join(s for s in sections if s)
+    return f"Informações Complementares — {ticker}\n\n{body}"
 
 
 def get_complementary_data(ticker: str) -> str:
-    if AsyncWebCrawler is None:
+    """Return formatted Fundamentus data for ticker via pynvest, or '' on failure."""
+    try:
+        df = Fundamentus().coleta_indicadores_de_ativo(ticker)
+        if df is None or df.empty:
+            return ""
+        return _format(ticker, df)
+    except Exception as e:
+        _logger.warning("Fundamentus pynvest error for ticker=%s: %s", ticker, e)
         return ""
-
-    async def _async_get_data() -> str:
-        url = f"https://fundamentus.com.br/detalhes.php?papel={ticker}"
-        fundamentus_data = await extract_stock_info(url)
-        fundamentus_json = json.loads(fundamentus_data)
-        return format_complementary_stock_info(fundamentus_json)
-
-    return asyncio.run(_async_get_data())
