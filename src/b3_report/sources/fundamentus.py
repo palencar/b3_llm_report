@@ -3,8 +3,12 @@ import json
 import os
 from typing import Optional
 
-from crawl4ai import AsyncWebCrawler
-from crawl4ai.extraction_strategy import LLMExtractionStrategy
+try:
+    from crawl4ai import AsyncWebCrawler
+    from crawl4ai.extraction_strategy import LLMExtractionStrategy
+except ImportError:  # pragma: no cover
+    AsyncWebCrawler = None  # type: ignore[assignment,misc]
+    LLMExtractionStrategy = None  # type: ignore[assignment,misc]
 from pydantic import BaseModel, Field
 
 
@@ -123,6 +127,9 @@ Oscilações
 
 
 def get_complementary_data(ticker: str) -> str:
+    if AsyncWebCrawler is None:
+        return ""
+
     async def _async_get_data() -> str:
         url = f"https://fundamentus.com.br/detalhes.php?papel={ticker}"
         fundamentus_data = await extract_stock_info(url)

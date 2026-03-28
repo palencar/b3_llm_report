@@ -46,10 +46,10 @@ def _zip_bytes(files: dict) -> bytes:
     return buf.getvalue()
 
 
-def _make_cadastro_zip(tmp_path: str) -> str:
-    path = os.path.join(tmp_path, "cia_aberta.zip")
+def _make_cadastro_csv(tmp_path: str) -> str:
+    path = os.path.join(tmp_path, "cad_cia_aberta.csv")
     with open(path, "wb") as f:
-        f.write(_zip_bytes({"cia_aberta.csv": _CADASTRO_CSV}))
+        f.write(_CADASTRO_CSV.encode("latin-1"))
     return path
 
 
@@ -83,7 +83,7 @@ def _init_db(db_path: str) -> None:
 # ---------------------------------------------------------------------------
 
 def test_parse_companies(tmp_path):
-    zip_path = _make_cadastro_zip(str(tmp_path))
+    zip_path = _make_cadastro_csv(str(tmp_path))
     result = parse_companies(zip_path)
     assert len(result) == 3
     cnpjs = {r["cnpj"] for r in result}
@@ -174,7 +174,7 @@ def _fake_download_factory(tmp_path: str):
     def _fake(url, dest_path, timeout=60):
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
         if "CAD" in url:
-            content = _zip_bytes({"cia_aberta.csv": _CADASTRO_CSV})
+            content = _CADASTRO_CSV.encode("latin-1")
         elif "DFP" in url:
             content = _zip_bytes({"dfp_cia_aberta_2024_BPA.csv": _DFP_BPA_CSV})
         else:  # ITR

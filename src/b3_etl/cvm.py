@@ -23,7 +23,7 @@ _REPORT_TYPES = frozenset({"BPA", "BPP", "DRE", "DFC_MI", "DFC_MD", "DVA", "DMPL
 
 _SCALE = {"UNIDADE": 1, "MIL": 1_000, "MILHÃO": 1_000_000}
 
-_CADASTRO_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/CAD/DADOS/cia_aberta.zip"
+_CADASTRO_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/CAD/DADOS/cad_cia_aberta.csv"
 _DFP_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/dfp_cia_aberta_{year}.zip"
 _ITR_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/ITR/DADOS/itr_cia_aberta_{year}.zip"
 
@@ -107,26 +107,20 @@ def parse_statements(zip_path: str, source: str) -> list[dict]:
     return list(seen.values())
 
 
-def parse_companies(zip_path: str) -> list[dict]:
-    """Parse cia_aberta.zip. Returns list of {cnpj, name, cd_cvm}."""
+def parse_companies(csv_path: str) -> list[dict]:
+    """Parse cad_cia_aberta.csv. Returns list of {cnpj, name, cd_cvm}."""
     result = []
-    with zipfile.ZipFile(zip_path) as zf:
-        csv_names = [n for n in zf.namelist() if n.lower().endswith(".csv")]
-        if not csv_names:
-            return result
-        with zf.open(csv_names[0]) as raw:
-            reader = csv.DictReader(
-                io.TextIOWrapper(raw, encoding="latin-1"), delimiter=";"
-            )
-            for row in reader:
-                cnpj = row.get("CNPJ_CIA", "").strip()
-                if not cnpj:
-                    continue
-                result.append({
-                    "cnpj": cnpj,
-                    "name": row.get("DENOM_SOCIAL", "").strip(),
-                    "cd_cvm": row.get("CD_CVM", "").strip(),
-                })
+    with open(csv_path, encoding="latin-1") as f:
+        reader = csv.DictReader(f, delimiter=";")
+        for row in reader:
+            cnpj = row.get("CNPJ_CIA", "").strip()
+            if not cnpj:
+                continue
+            result.append({
+                "cnpj": cnpj,
+                "name": row.get("DENOM_SOCIAL", "").strip(),
+                "cd_cvm": row.get("CD_CVM", "").strip(),
+            })
     return result
 
 
@@ -197,7 +191,7 @@ def run_ingest_cvm(
     rows_statements = 0
 
     cvm_dir = os.path.join(config.raw_dir, "cvm")
-    cadastro_path = os.path.join(cvm_dir, "cadastro", "cia_aberta.zip")
+    cadastro_path = os.path.join(cvm_dir, "cadastro", "cad_cia_aberta.csv")
     dfp_path = os.path.join(cvm_dir, str(year), f"dfp_cia_aberta_{year}.zip")
     itr_path = os.path.join(cvm_dir, str(year), f"itr_cia_aberta_{year}.zip")
 
