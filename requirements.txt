@@ -1,4 +1,4 @@
 yfinance==0.2.49
-Crawl4AI==0.3.731
+pynvest>=0.1.2,<0.2
 openai==1.54.3
 python-dotenv>=1.0,<2.0
