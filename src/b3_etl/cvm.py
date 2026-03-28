@@ -49,16 +49,21 @@ def _extract_report_type(filename: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 def parse_statements(zip_path: str, source: str) -> list[dict]:
-    """Parse DFP/ITR ZIP. Returns list of statement records.
+    """Parse DFP/ITR ZIP. Returns deduplicated list of statement records.
 
     Filters ORDEM_EXERC == 'ÚLTIMO'. Normalizes VL_CONTA by ESCALA_MOEDA.
+    When both _con and _ind CSVs exist for the same account, _con (consolidated)
+    takes precedence. Duplicates identified by (cnpj, period, report_type, account_code).
     period is returned as datetime.date.
     """
-    result = []
+    seen: dict[tuple, dict] = {}
     with zipfile.ZipFile(zip_path) as zf:
-        for name in zf.namelist():
-            if not name.lower().endswith(".csv"):
-                continue
+        # Process _ind before _con so consolidated overwrites individual
+        names = sorted(
+            (n for n in zf.namelist() if n.lower().endswith(".csv")),
+            key=lambda n: (1 if "_con" in n.lower() else 0, n),
+        )
+        for name in names:
             report_type = _extract_report_type(name)
             if report_type is None:
                 continue
@@ -86,7 +91,8 @@ def parse_statements(zip_path: str, source: str) -> list[dict]:
                         value = float(vl_conta.replace(",", ".")) * _SCALE.get(escala, 1)
                     except ValueError:
                         continue
-                    result.append({
+                    key = (cnpj, period, report_type, cd_conta)
+                    seen[key] = {
                         "cnpj": cnpj,
                         "period": period,
                         "report_type": report_type,
@@ -95,8 +101,8 @@ def parse_statements(zip_path: str, source: str) -> list[dict]:
                         "value": value,
                         "currency": moeda,
                         "source": source,
-                    })
-    return result
+                    }
+    return list(seen.values())
 
 
 def parse_companies(zip_path: str) -> list[dict]:

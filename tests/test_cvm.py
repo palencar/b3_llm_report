@@ -135,6 +135,31 @@ def test_parse_statements_filtra_penultimo(tmp_path):
     assert penultimos[0]["value"] == 100_000_000.0
 
 
+_DFP_BPA_IND_CSV = (
+    "CNPJ_CIA;DT_REFER;ORDEM_EXERC;CD_CONTA;DS_CONTA;VL_CONTA;MOEDA;ESCALA_MOEDA\n"
+    "33.000.167/0001-01;2024-12-31;ÚLTIMO;1;Ativo Total;50000;REAL;MIL\n"
+)
+
+_DFP_BPA_CON_CSV = (
+    "CNPJ_CIA;DT_REFER;ORDEM_EXERC;CD_CONTA;DS_CONTA;VL_CONTA;MOEDA;ESCALA_MOEDA\n"
+    "33.000.167/0001-01;2024-12-31;ÚLTIMO;1;Ativo Total;100000;REAL;MIL\n"
+)
+
+
+def test_parse_statements_prefere_con_sobre_ind(tmp_path):
+    """Con (consolidado) deve prevalecer sobre ind (individual) para mesma PK."""
+    path = os.path.join(str(tmp_path), "dfp_con_ind.zip")
+    with open(path, "wb") as f:
+        f.write(_zip_bytes({
+            "dfp_cia_aberta_BPA_ind_2024.csv": _DFP_BPA_IND_CSV,
+            "dfp_cia_aberta_BPA_con_2024.csv": _DFP_BPA_CON_CSV,
+        }))
+    result = parse_statements(path, "cvm_dfp")
+    # Deve haver apenas 1 row (dedup por PK), com o valor do _con (100_000_000)
+    assert len(result) == 1
+    assert result[0]["value"] == 100_000_000.0
+
+
 # ---------------------------------------------------------------------------
 # Task 3: download_zip, _download_or_skip, run_ingest_cvm
 # ---------------------------------------------------------------------------
