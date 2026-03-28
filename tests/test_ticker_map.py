@@ -19,7 +19,7 @@ _FAKE_RESULTS = [
 ]
 
 _FAKE_PAGE_1 = {
-    "totalPages": 2,
+    "page": {"pageNumber": 1, "pageSize": 4, "totalRecords": 5, "totalPages": 2},
     "results": [
         {"issuingCompany": "PETR4", "cnpj": "33000167000101", "companyName": "PETROBRAS S.A."},
         {"issuingCompany": "PETR3", "cnpj": "33000167000101", "companyName": "PETROBRAS S.A."},
@@ -29,7 +29,7 @@ _FAKE_PAGE_1 = {
 }
 
 _FAKE_PAGE_2 = {
-    "totalPages": 2,
+    "page": {"pageNumber": 2, "pageSize": 4, "totalRecords": 5, "totalPages": 2},
     "results": [
         {"issuingCompany": "VALE3", "cnpj": "33592510000103", "companyName": "VALE S.A."},
     ],
@@ -85,6 +85,42 @@ def test_parse_b3_results():
 # ---------------------------------------------------------------------------
 # Task 2: fetch_b3_page + run_build_ticker_map
 # ---------------------------------------------------------------------------
+
+def test_paginacao_usa_page_totalPages(tmp_path):
+    """run_build_ticker_map deve ler totalPages de data['page']['totalPages']."""
+    from b3_etl.ticker_map import run_build_ticker_map
+    from b3_storage.db import connect
+
+    config = _make_config(str(tmp_path))
+    pages_fetched = []
+
+    def _fake(page: int, page_size: int = 120, timeout: int = 30) -> dict:
+        pages_fetched.append(page)
+        if page == 1:
+            return {
+                "page": {"pageNumber": 1, "pageSize": 2, "totalRecords": 3, "totalPages": 2},
+                "results": [
+                    {"issuingCompany": "PETR4", "cnpj": "33000167000101", "companyName": "PETROBRAS S.A."},
+                ],
+            }
+        return {
+            "page": {"pageNumber": 2, "pageSize": 2, "totalRecords": 3, "totalPages": 2},
+            "results": [
+                {"issuingCompany": "VALE3", "cnpj": "33592510000103", "companyName": "VALE S.A."},
+            ],
+        }
+
+    with patch("b3_etl.ticker_map.fetch_b3_page", side_effect=_fake):
+        rc = run_build_ticker_map(config=config)
+
+    assert rc == 0
+    assert pages_fetched == [1, 2], f"Expected [1, 2], got {pages_fetched}"
+
+    con = connect(config.db_path, read_only=True)
+    count = con.execute("SELECT COUNT(*) FROM ticker_map").fetchone()[0]
+    con.close()
+    assert count == 2
+
 
 def test_run_build_ticker_map_popula_tabela(tmp_path):
     """run_build_ticker_map deve gravar ticker_map com registros corretos."""

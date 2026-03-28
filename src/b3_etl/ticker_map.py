@@ -90,7 +90,7 @@ def run_build_ticker_map(config: Config, skip_db: bool = False) -> int:
     while page <= total_pages:
         try:
             data = fetch_b3_page(page)
-            total_pages = data.get("totalPages", 1)
+            total_pages = data.get("page", {}).get("totalPages", 1)
             records = parse_b3_results(data.get("results", []))
             all_records.extend(records)
             log_info("etl_ticker_map_page", page=page, total_pages=total_pages, rows=len(records))
