@@ -19,6 +19,16 @@ def _get_int(name: str, default: int) -> int:
         return default
 
 
+def _get_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class Config:
     openai_api_key: str
@@ -37,6 +47,9 @@ class Config:
     fund_ttl: int
     price_ttl: int
     log_level: str
+    queue_dir: str
+    report_min_age_hours: float
+    queue_poll_seconds: int
 
 
 def load_config() -> Config:
@@ -57,4 +70,7 @@ def load_config() -> Config:
         fund_ttl=_get_int("FUND_TTL", 86400),
         price_ttl=_get_int("PRICE_TTL", 900),
         log_level=_get_env("LOG_LEVEL", "INFO"),
+        queue_dir=_get_env("QUEUE_DIR", "queue"),
+        report_min_age_hours=_get_float("REPORT_MIN_AGE_HOURS", 24.0),
+        queue_poll_seconds=_get_int("QUEUE_POLL_SECONDS", 60),
     )
