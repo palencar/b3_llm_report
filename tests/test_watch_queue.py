@@ -48,12 +48,11 @@ def _make_config(tmp_path, min_age_hours=24.0):
 
 
 def test_gera_relatorio_se_ausente(tmp_path):
-    """Sem relatório existente → run_report chamado, arquivo de fila removido."""
+    """Sem relatório existente → run_report chamado, arquivo de fila mantido."""
     config = _make_config(tmp_path)
     reports_dir = str(tmp_path / "reports")
     os.makedirs(reports_dir, exist_ok=True)
 
-    # Criar trigger na fila
     trigger = os.path.join(config.queue_dir, "PETR4")
     open(trigger, "w").close()
 
@@ -62,7 +61,7 @@ def test_gera_relatorio_se_ausente(tmp_path):
             _process_queue(config)
 
     mock_report.assert_called_once_with("PETR4")
-    assert not os.path.exists(trigger)
+    assert os.path.exists(trigger)
 
 
 def test_skip_relatorio_recente(tmp_path):
@@ -71,7 +70,6 @@ def test_skip_relatorio_recente(tmp_path):
     reports_dir = str(tmp_path / "reports")
     os.makedirs(reports_dir, exist_ok=True)
 
-    # Criar relatório recente (agora)
     report = os.path.join(reports_dir, "VALE3.md")
     open(report, "w").close()  # mtime = agora → age ≈ 0h < 24h
 
@@ -83,7 +81,7 @@ def test_skip_relatorio_recente(tmp_path):
             _process_queue(config)
 
     mock_report.assert_not_called()
-    assert not os.path.exists(trigger)
+    assert os.path.exists(trigger)
 
 
 def test_gera_relatorio_antigo(tmp_path):
@@ -92,7 +90,6 @@ def test_gera_relatorio_antigo(tmp_path):
     reports_dir = str(tmp_path / "reports")
     os.makedirs(reports_dir, exist_ok=True)
 
-    # Criar relatório antigo (mtime = 2 horas atrás)
     report = os.path.join(reports_dir, "ITUB4.md")
     open(report, "w").close()
     old_mtime = time.time() - 7200  # 2 horas atrás
@@ -106,11 +103,11 @@ def test_gera_relatorio_antigo(tmp_path):
             _process_queue(config)
 
     mock_report.assert_called_once_with("ITUB4")
-    assert not os.path.exists(trigger)
+    assert os.path.exists(trigger)
 
 
 def test_erro_run_report_nao_trava_loop(tmp_path):
-    """run_report lança exceção → arquivo de fila removido, sem propagação."""
+    """run_report lança exceção → arquivo de fila mantido, sem propagação."""
     config = _make_config(tmp_path)
     reports_dir = str(tmp_path / "reports")
     os.makedirs(reports_dir, exist_ok=True)
@@ -122,11 +119,11 @@ def test_erro_run_report_nao_trava_loop(tmp_path):
         with patch("watch_queue.REPORTS_DIR", reports_dir):
             _process_queue(config)  # não deve propagar
 
-    assert not os.path.exists(trigger)
+    assert os.path.exists(trigger)
 
 
-def test_ticker_invalido_removido(tmp_path):
-    """Nome de arquivo inválido → removido sem chamar run_report."""
+def test_ticker_invalido_ignorado(tmp_path):
+    """Nome de arquivo inválido → ignorado sem chamar run_report, arquivo mantido."""
     config = _make_config(tmp_path)
     reports_dir = str(tmp_path / "reports")
     os.makedirs(reports_dir, exist_ok=True)
@@ -139,7 +136,7 @@ def test_ticker_invalido_removido(tmp_path):
             _process_queue(config)
 
     mock_report.assert_not_called()
-    assert not os.path.exists(trigger)
+    assert os.path.exists(trigger)
 
 
 def test_multiplos_tickers(tmp_path):
@@ -157,5 +154,5 @@ def test_multiplos_tickers(tmp_path):
             _process_queue(config)
 
     assert set(called) == {"WEGE3", "EGIE3"}
-    assert not os.path.exists(os.path.join(config.queue_dir, "WEGE3"))
-    assert not os.path.exists(os.path.join(config.queue_dir, "EGIE3"))
+    assert os.path.exists(os.path.join(config.queue_dir, "WEGE3"))
+    assert os.path.exists(os.path.join(config.queue_dir, "EGIE3"))

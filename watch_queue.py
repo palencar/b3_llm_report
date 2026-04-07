@@ -42,29 +42,22 @@ def _process_queue(config) -> None:
         return
 
     for name in entries:
-        filepath = os.path.join(config.queue_dir, name)
         ticker = name.upper()
+        if not _TICKER_RE.match(ticker):
+            _logger.warning("invalid ticker in queue, skipping: %s", name)
+            continue
+
+        age = _report_age_hours(ticker)
+        if age is not None and age < config.report_min_age_hours:
+            _logger.info("skipped %s (report age: %.1fh)", ticker, age)
+            continue
+
+        _logger.info("generating report for %s", ticker)
         try:
-            if not _TICKER_RE.match(ticker):
-                _logger.warning("invalid ticker in queue, skipping: %s", name)
-                continue
-
-            age = _report_age_hours(ticker)
-            if age is not None and age < config.report_min_age_hours:
-                _logger.info("skipped %s (report age: %.1fh)", ticker, age)
-                continue
-
-            _logger.info("generating report for %s", ticker)
             run_report(ticker)
             _logger.info("generated %s", ticker)
-
         except Exception:
             _logger.exception("error processing ticker %s", ticker)
-        finally:
-            try:
-                os.remove(filepath)
-            except OSError:
-                _logger.warning("could not remove queue file: %s", filepath)
 
 
 def main() -> None:
