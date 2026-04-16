@@ -26,12 +26,27 @@ REPORTS_DIR = "reports"
 _TICKER_RE = re.compile(r"^[A-Z0-9]{3,6}$")
 
 
-def _report_age_hours(ticker: str) -> float | None:
-    """Return age of reports/TICKER.md in hours, or None if it does not exist."""
-    path = os.path.join(REPORTS_DIR, f"{ticker}.md")
-    if not os.path.exists(path):
-        return None
-    return (time.time() - os.path.getmtime(path)) / 3600
+def _should_generate(ticker: str, queue_mtime: float, min_age_hours: float) -> tuple[bool, str]:
+    """Return (should_generate, reason) for the given ticker.
+
+    Generates if:
+    - report does not exist, OR
+    - queue file is newer than report (new request) AND report is old enough
+    """
+    report_path = os.path.join(REPORTS_DIR, f"{ticker}.md")
+    if not os.path.exists(report_path):
+        return True, "report absent"
+
+    report_mtime = os.path.getmtime(report_path)
+    age_hours = (time.time() - report_mtime) / 3600
+
+    if report_mtime >= queue_mtime:
+        return False, f"report newer than queue trigger (age: {age_hours:.1f}h)"
+
+    if age_hours < min_age_hours:
+        return False, f"report too recent (age: {age_hours:.1f}h < {min_age_hours:.1f}h)"
+
+    return True, f"queue trigger newer than report (age: {age_hours:.1f}h)"
 
 
 def _process_queue(config) -> None:
@@ -47,12 +62,15 @@ def _process_queue(config) -> None:
             _logger.warning("invalid ticker in queue, skipping: %s", name)
             continue
 
-        age = _report_age_hours(ticker)
-        if age is not None and age < config.report_min_age_hours:
-            _logger.info("skipped %s (report age: %.1fh)", ticker, age)
+        filepath = os.path.join(config.queue_dir, name)
+        queue_mtime = os.path.getmtime(filepath)
+        generate, reason = _should_generate(ticker, queue_mtime, config.report_min_age_hours)
+
+        if not generate:
+            _logger.info("skipped %s (%s)", ticker, reason)
             continue
 
-        _logger.info("generating report for %s", ticker)
+        _logger.info("generating report for %s (%s)", ticker, reason)
         try:
             run_report(ticker)
             _logger.info("generated %s", ticker)
