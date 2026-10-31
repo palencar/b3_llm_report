@@ -1,6 +1,46 @@
 import json
+from datetime import datetime, timezone
 
 import yfinance as yf
+
+EVENT_SOURCE_VERSION = "yahoo-info-earnings-v1"
+_EVENT_FIELDS = ("earningsTimestamp", "earningsTimestampStart", "earningsTimestampEnd",
+                 "earningsCallTimestamp", "isEarningsDateEstimate", "exchangeTimezoneName")
+
+
+def _event_metadata(info: dict) -> dict:
+    """Preserva somente campos ja retornados por info, sem nova consulta."""
+    raw = {key: info[key] for key in _EVENT_FIELDS if key in info}
+    dates = {}
+    for key in _EVENT_FIELDS[:4]:
+        value = raw.get(key)
+        if type(value) not in (int, float):
+            continue
+        try:
+            dates[key] = datetime.fromtimestamp(value, timezone.utc).isoformat()
+        except (ValueError, OverflowError, OSError):
+            continue
+    estimate = raw.get("isEarningsDateEstimate")
+    certainty = "estimativa" if estimate is True else "nao_marcada_como_estimativa" if estimate is False else "desconhecida"
+    return {
+        "version": EVENT_SOURCE_VERSION, "source": "Yahoo Finance via yfinance.Ticker.info",
+        "status": "datas_reportadas" if dates else "datas_nao_fornecidas_em_info",
+        "raw_fields": raw, "timestamps_utc": dates, "certainty": certainty,
+        "availability": "observado em Source Metadata.Fetched At; publicacao original desconhecida",
+        "limitations": "Pode ser intervalo ou estimativa. Horario do fornecedor nao e horario confirmado pelo RI. "
+                       "Data passada nao confirma divulgacao nem incorporacao aos dados. Ausencia nao comprova ausencia de evento.",
+    }
+
+
+def format_event_metadata(metadata: dict) -> str:
+    lines = ["Eventos de Resultados (Yahoo Finance, nao confirmados pelo RI)",
+             f"- Disponibilidade: {metadata['status']}; certeza: {metadata['certainty']}"]
+    for field, timestamp in metadata["timestamps_utc"].items():
+        lines.append(f"- {field}: {timestamp}")
+    if metadata["raw_fields"].get("exchangeTimezoneName"):
+        lines.append(f"- Fuso reportado pela bolsa: {metadata['raw_fields']['exchangeTimezoneName']}")
+    lines.append("- Limitacoes: " + metadata["limitations"])
+    return "\n".join(lines)
 
 
 def extract_yfinance_info(symbol: str) -> str:
@@ -10,7 +50,14 @@ def extract_yfinance_info(symbol: str) -> str:
 
     return json.dumps(
         {
+            "Source Metadata": {
+                "Fetched At": datetime.now(timezone.utc).isoformat(),
+                "Price Time": info.get("regularMarketTime"),
+                "Financial Period": info.get("mostRecentQuarter"),
+            },
+            "Event Metadata": _event_metadata(info),
             "Basic Info": {
+                "Quote Type": info.get("quoteType"),
                 "Name": info.get("shortName"),
                 "Symbol": info.get("symbol"),
                 "Currency": info.get("currency", "USD"),
@@ -127,9 +174,14 @@ Preços-Alvo dos Analistas
 Resumo de Negócios
 {stock_data['Basic Info'].get('Business Summary', 'Sem informações disponíveis')}
 """
+    if "Event Metadata" in stock_data:
+        formatted_text += "\n\n" + format_event_metadata(stock_data["Event Metadata"])
     return formatted_text
 
 
-def get_yfinance_data(ticker: str) -> str:
+def get_yfinance_data(ticker: str, *, on_data=None) -> str:
     yfinance_data = extract_yfinance_info(ticker)
-    return format_yfinance_data(json.loads(yfinance_data))
+    data = json.loads(yfinance_data)
+    if on_data is not None:
+        on_data(data)
+    return format_yfinance_data(data)
