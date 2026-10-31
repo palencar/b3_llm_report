@@ -5,7 +5,6 @@ python -m py_compile \
   main.py \
   init_db.py \
   ingest.py \
-  prepare_request.py \
   get_info_yfinance.py \
   src/b3_core/config.py \
   src/b3_core/log.py \
