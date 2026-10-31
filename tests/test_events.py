@@ -159,3 +159,26 @@ def test_snapshot_rejeita_contexto_de_outro_instante_ou_fase(tmp_path):
 def test_eventos_duplicados_nao_sao_silenciosamente_conciliados(tmp_path):
     with pytest.raises(ValueError, match="duplicado"):
         load(calendar(tmp_path, [event(), event()]))
+
+
+def test_relatorio_legado_recebe_contexto_e_persiste_aviso(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+    from b3_report import cli
+    context = load(calendar(tmp_path))
+    config = SimpleNamespace(raw_dir=str(tmp_path / "raw"), ollama_url_base="http://simulado", openai_url_base="",
+        llm_model="texto", llm_api_key="", db_path="simulado", fund_ttl=1, report_history_n=1)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "load_dotenv", Mock())
+    monkeypatch.setattr(cli, "load_config", Mock(return_value=config))
+    monkeypatch.setattr(cli, "load_event_context", Mock(return_value=context))
+    for name in ("get_yfinance_data", "get_complementary_data", "get_cvm_data", "get_recent_reports_history"):
+        monkeypatch.setattr(cli, name, Mock(return_value="dados simulados"))
+    monkeypatch.setattr(cli, "prepare_llm_investment_analysis_request", Mock(return_value="Prompt simulado"))
+    monkeypatch.setattr(cli, "_validate_report_content", Mock())
+    request = Mock(return_value="WEGE3 - relatorio simulado")
+    monkeypatch.setattr(cli, "get_investment_analysis", request)
+    report = cli.run_report("WEGE3")
+    assert "eventos-v2-experimental-7d" in request.call_args.args[0]
+    assert "evento proximo" in report
+    assert "WEGE3" in (tmp_path / "reports" / "WEGE3.md").read_text()
+    assert len(list((tmp_path / "raw" / "events" / "WEGE3").glob("*.json"))) == 1
