@@ -64,6 +64,33 @@ def test_get_cvm_data_retorna_texto(tmp_path):
     assert "Ativo Total" in result
 
 
+def test_get_cvm_data_cnpj_zero_a_esquerda(tmp_path):
+    """B3 remove zero à esquerda do CNPJ; CVM mantém. O join normaliza p/ 14 dígitos."""
+    db = str(tmp_path / "t.duckdb")
+    con = _init_con(db)
+    con.begin()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    con.execute(
+        "INSERT INTO ticker_map VALUES (?, ?, ?, ?)",
+        ["2474103000119", "EGIE", "ENGIE BRASIL ENERGIA S.A.", now],
+    )
+    con.execute(
+        "INSERT INTO cvm_companies VALUES (?, ?, ?, ?)",
+        ["02.474.103/0001-19", "ENGIE BRASIL ENERGIA S.A.", "17329", now],
+    )
+    for year in (2023, 2024, 2025):
+        con.execute(
+            "INSERT INTO cvm_statements VALUES (?,?,?,?,?,?,?,?,?)",
+            ["02.474.103/0001-19", date(year, 12, 31), "BPA", "1",
+             "Ativo Total", float(100_000_000 * year), "REAL", "cvm_dfp", now],
+        )
+    con.execute("COMMIT")
+    con.close()
+    result = get_cvm_data("EGIE3", db)
+    assert result != ""
+    assert "Ativo Total" in result
+
+
 def test_get_cvm_data_filtra_nivel_1_2(tmp_path):
     db = str(tmp_path / "t.duckdb")
     con = _init_con(db)

@@ -1,8 +1,13 @@
-"""Source Fundamentus: indicadores de mercado via pynvest."""
+"""Source Fundamentus: indicadores de mercado via DB-first com cache DuckDB."""
 import logging
+import os
+from datetime import datetime, timedelta
+from typing import Optional
 
 import pandas as pd
-from pynvest.scrappers.fundamentus import Fundamentus
+
+from b3_core.fundamentus import LABEL_TO_KEY, indicators_to_dataframe
+from b3_storage.fundamentus import load_cache, latest_fetch, save_cache
 
 _logger = logging.getLogger(__name__)
 
@@ -26,52 +31,40 @@ _SECAO_MULTIPLOS = [
     ("P/VP", "vlr_ind_p_sobre_vp"),
     ("P/EBIT", "vlr_ind_p_sobre_ebit"),
     ("PSR", "vlr_ind_psr"),
-    ("P/Ativo", "vlr_ind_p_sobre_ativ"),
-    ("P/Cap.Giro", "vlr_ind_p_sobre_cap_giro"),
-    ("P/Ativ.Circ.Liq", "vlr_ind_p_sobre_ativ_circ_liq"),
-    ("EV/EBITDA", "vlr_ind_ev_sobre_ebitda"),
-    ("EV/EBIT", "vlr_ind_ev_sobre_ebit"),
+    ("P/Ativos", "vlr_ind_p_sobre_ativ"),
+    ("P/Cap. Giro", "vlr_ind_p_sobre_cap_giro"),
+    ("P/Ativ Circ Liq", "vlr_ind_p_sobre_ativ_circ_liq"),
     ("Div. Yield", "vlr_ind_div_yield"),
-    ("LPA", "vlr_ind_lpa"),
-    ("VPA", "vlr_ind_vpa"),
+    ("EV / EBITDA", "vlr_ind_ev_sobre_ebitda"),
+    ("EV / EBIT", "vlr_ind_ev_sobre_ebit"),
 ]
 
 _SECAO_RENTABILIDADE = [
     ("ROE", "vlr_ind_roe"),
     ("ROIC", "vlr_ind_roic"),
-    ("Margem Bruta", "vlr_ind_margem_bruta"),
-    ("Margem EBIT", "vlr_ind_margem_ebit"),
-    ("Margem Líquida", "vlr_ind_margem_liq"),
-    ("EBIT/Ativo", "vlr_ind_ebit_sobre_ativo"),
-    ("Giro do Ativo", "vlr_ind_giro_ativos"),
-    ("Cresc. Rec. 5a", "pct_cresc_rec_liq_ult_5a"),
+    ("Marg. Bruta", "vlr_ind_margem_bruta"),
+    ("Marg. EBIT", "vlr_ind_margem_ebit"),
+    ("Marg. Líquida", "vlr_ind_margem_liq"),
 ]
 
 _SECAO_BALANCO_DRE = [
-    ("Ativo Total", "vlr_ativo"),
-    ("Disponibilidades", "vlr_disponibilidades"),
-    ("Ativo Circulante", "vlr_ativ_circulante"),
-    ("Dívida Bruta", "vlr_divida_bruta"),
-    ("Dívida Líquida", "vlr_divida_liq"),
-    ("Patrimônio Líquido", "vlr_patrim_liq"),
-    ("Liquidez Corrente", "vlr_liquidez_corr"),
-    ("Dív.Bruta/Patrim.", "vlr_ind_divida_bruta_sobre_patrim"),
-    ("Receita Líq. 12m", "vlr_receita_liq_ult_12m"),
+    ("EBIT", "vlr_ebit_ult_3m"),
+    ("Receita Líq 3m", "vlr_receita_liq_ult_3m"),
+    ("Lucro Líq 3m", "vlr_lucro_liq_ult_3m"),
     ("EBIT 12m", "vlr_ebit_ult_12m"),
-    ("Lucro Líq. 12m", "vlr_lucro_liq_ult_12m"),
-    ("Receita Líq. 3m", "vlr_receita_liq_ult_3m"),
-    ("EBIT 3m", "vlr_ebit_ult_3m"),
-    ("Lucro Líq. 3m", "vlr_lucro_liq_ult_3m"),
+    ("Receita Líq 12m", "vlr_receita_liq_ult_12m"),
+    ("Lucro Líq 12m", "vlr_lucro_liq_ult_12m"),
+    ("Ativo Total", "vlr_ativo"),
+    ("Patrimônio Líq", "vlr_patrim_liq"),
+    ("Dívida Bruta", "vlr_divida_bruta"),
+    ("Disponibilidades", "vlr_disponibilidades"),
 ]
 
 _SECAO_OSCILACOES = [
-    ("Dia", "pct_var_dia"),
-    ("Mês", "pct_var_mes"),
-    ("30 dias", "pct_var_30d"),
-    ("12 meses", "pct_var_12m"),
-    ("Ano (a0)", "pct_var_ano_a0"),
-    ("Ano -1", "pct_var_ano_a1"),
-    ("Ano -2", "pct_var_ano_a2"),
+    ("Var. Dia", "pct_var_dia"),
+    ("Var. Mês", "pct_var_mes"),
+    ("Var. 30 dias", "pct_var_30d"),
+    ("Var. 12 meses", "pct_var_12m"),
 ]
 
 
@@ -84,7 +77,8 @@ def _val(row: pd.Series, col: str):
             return None
     except (TypeError, ValueError):
         pass  # pd.isna raises on array-like values
-    return str(v)
+    s = str(v)
+    return None if not s else s
 
 
 def _format_section(title: str, fields: list, row: pd.Series) -> str:
@@ -109,13 +103,63 @@ def _format(ticker: str, df: pd.DataFrame) -> str:
     return f"Informações Complementares — {ticker}\n\n{body}"
 
 
-def get_complementary_data(ticker: str) -> str:
-    """Return formatted Fundamentus data for ticker via pynvest, or '' on failure."""
+def get_complementary_payload(
+    ticker: str,
+    db_path: Optional[str] = None,
+    ttl_seconds: int = 86400,
+) -> dict:
+    """Retorna texto, indicadores originais e timestamp da coleta/cache.
+
+    Flow: read cache first (DB-first), fetch online if miss/expired, write
+    cache on fetch. Sem uso de cache vencido em caso de erro. fetched_at
+    preserva o horario local do cache, nao representa publicacao dos dados.
+    """
+    _logger.info("fundamentus_cache_check ticker=%s", ticker)
+
+    # ------------------------------------------------------------------ cache hit
+    if db_path and os.path.exists(db_path):
+        fetched_at = latest_fetch(db_path, ticker)
+        if fetched_at:
+            if isinstance(fetched_at, str):
+                fetched_at_dt = datetime.fromisoformat(fetched_at)
+            else:
+                fetched_at_dt = fetched_at
+
+            cache_age = (datetime.now() - fetched_at_dt).total_seconds()
+            if cache_age < ttl_seconds:
+                cached = load_cache(db_path, ticker)
+                if cached:
+                    _logger.info("fundamentus_cache_hit ticker=%s", ticker)
+                    return {"text": _format(ticker, indicators_to_dataframe(cached)),
+                            "indicators": cached, "fetched_at": fetched_at_dt.isoformat()}
+
+    # ----------------------------------------------------------------- online
     try:
-        df = Fundamentus().coleta_indicadores_de_ativo(ticker)
-        if df is None or df.empty:
-            return ""
-        return _format(ticker, df)
+        from b3_core.fundamentus import fetch_indicators as _fetch_indicators
+
+        raw = _fetch_indicators(ticker)
+        if not raw:
+            _logger.warning("fundamentus_fetch_empty ticker=%s", ticker)
+            return {"text": "", "indicators": {}, "fetched_at": None}
     except Exception as e:
-        _logger.warning("Fundamentus pynvest error for ticker=%s: %s", ticker, e)
-        return ""
+        _logger.warning("fundamentus_fetch_error ticker=%s error=%s", ticker, str(e))
+        return {"text": "", "indicators": {}, "fetched_at": None}
+
+    df = indicators_to_dataframe(raw)
+    fetched_at = datetime.now()
+
+    # ------------------------------------------------------------------- write cache
+    if db_path:
+        try:
+            save_cache(db_path, ticker, raw, fetched_at)
+            _logger.info("fundamentus_cache_write ticker=%s", ticker)
+        except Exception as e:
+            _logger.warning("fundamentus_cache_write_error ticker=%s error=%s", ticker, str(e))
+
+    return {"text": _format(ticker, df), "indicators": raw, "fetched_at": fetched_at.isoformat()}
+
+
+def get_complementary_data(ticker: str, db_path: Optional[str] = None,
+                           ttl_seconds: int = 86400) -> str:
+    """Mantem a interface textual do relatorio legado."""
+    return get_complementary_payload(ticker, db_path=db_path, ttl_seconds=ttl_seconds)["text"]

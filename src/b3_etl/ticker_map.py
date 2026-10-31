@@ -45,6 +45,9 @@ def parse_b3_results(results: list[dict]) -> list[dict]:
             "ticker": ticker,
             "cnpj": cnpj,
             "name": r.get("companyName", "").strip(),
+            "sector": r.get("sector", "").strip(),
+            "industry": r.get("industry", "").strip(),
+            "segment": r.get("segment", "").strip(),
         })
     return out
 

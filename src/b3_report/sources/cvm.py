@@ -20,8 +20,8 @@ _QUERY = """
     SELECT s.period, s.report_type, s.account_code, s.account_name, s.value
     FROM cvm_statements s
     JOIN cvm_companies c ON c.cnpj = s.cnpj
-    -- ticker_map.cnpj é dígitos apenas (normalizado por parse_b3_results no ingest)
-    JOIN ticker_map t    ON regexp_replace(c.cnpj, '[^0-9]', '', 'g') = t.cnpj
+    -- CNPJ canônico = 14 dígitos; lpad ambos p/ 14 (B3 remove zero à esq., CVM mantém)
+    JOIN ticker_map t    ON lpad(regexp_replace(c.cnpj, '[^0-9]', '', 'g'), 14, '0') = lpad(t.cnpj, 14, '0')
     WHERE t.ticker = ?
       AND s.report_type IN ('BPA', 'BPP', 'DRE', 'DFC_MI', 'DFC_MD')
       AND LENGTH(s.account_code) - LENGTH(REPLACE(s.account_code, '.', '')) <= 1
@@ -97,5 +97,28 @@ def get_cvm_data(ticker: str, db_path: str) -> str:
     except Exception as e:
         _logger.warning("CVM query error for ticker=%s: %s", ticker, e)
         return ""
+    finally:
+        con.close()
+
+def fetch_raw_rows(ticker: str, db_path: str) -> list | None:
+    """Return raw CVM rows for inspection (not formatted for LLM).
+
+    Returns None when DB is missing or ticker not found.
+    """
+    if not os.path.exists(db_path):
+        return None
+    con = connect(db_path, read_only=True)
+    try:
+        lookup_ticker = _normalize_ticker(ticker)
+        row = con.execute(
+            "SELECT 1 FROM ticker_map WHERE ticker = ? LIMIT 1", [lookup_ticker]
+        ).fetchone()
+        if row is None:
+            return None
+        rows = con.execute(_QUERY, [lookup_ticker]).fetchall()
+        if not rows:
+            return None
+        max_year = max(_extract_year(r[0]) for r in rows)
+        return [r for r in rows if _extract_year(r[0]) >= max_year - 2]
     finally:
         con.close()

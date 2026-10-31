@@ -1,4 +1,7 @@
 yfinance==0.2.49
-pynvest>=0.1.2,<0.2
 openai==1.54.3
 python-dotenv>=1.0,<2.0
+duckdb==0.10.2
+pandas>=2.2,<3.0
+httpx>=0.27,<0.28
+numpy>=1.26,<2.0

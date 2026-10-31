@@ -72,7 +72,7 @@ def test_ingest_fundamentus_popula_ratios(tmp_path):
     html = _load_fixture("PETR4.html")
     config = load_config()
     config = config.__class__(
-        **{**config.__dict__, "raw_dir": str(tmp_path / "raw")}
+        **{**config.__dict__, "db_path": db_path, "raw_dir": str(tmp_path / "raw")}
     )
     fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
     con = connect(db_path, read_only=False)
@@ -93,32 +93,35 @@ def test_ingest_fundamentus_popula_ratios(tmp_path):
     raw_count = con.execute(
         "SELECT COUNT(*) FROM raw_files WHERE source = 'fundamentus.com.br'"
     ).fetchone()[0]
+    cache_count = con.execute(
+        "SELECT COUNT(*) FROM fundamentus_cache WHERE ticker = 'PETR4'"
+    ).fetchone()[0]
     con.close()
 
     assert ratio_count >= 8
     assert fund_count >= 3
     assert raw_count == 1
+    assert cache_count >= 8
 
 
 def test_ingest_fundamentus_falha_silenciosa(tmp_path):
-    """Falha de rede no Fundamentus não altera rc=0 nem dados BRAPI já gravados."""
+    """Falha de rede no Fundamentus não altera rc=0 nem dados yfinance já gravados."""
     db_path = str(tmp_path / "test.duckdb")
     _init_db(db_path)
-    brapi_fixture_path = os.path.join(
-        os.path.dirname(__file__), "fixtures", "brapi", "PETR4.json"
-    )
-    with open(brapi_fixture_path) as f:
-        brapi_data = json.load(f)
 
-    def fake_urlopen(req, timeout=30):
-        if "brapi.dev" in req.full_url:
-            payload = json.dumps(brapi_data).encode("utf-8")
-            mock_resp = MagicMock()
-            mock_resp.read.return_value = payload
-            mock_resp.__enter__ = lambda s: s
-            mock_resp.__exit__ = MagicMock(return_value=False)
-            return mock_resp
-        raise OSError("simulando falha de rede no Fundamentus")
+    from datetime import datetime
+    yf_payload = {
+        "name": "PETROBRAS PN",
+        "sector": "Energy",
+        "industry": "Oil & Gas",
+        "currency": "BRL",
+        "open": 48.5,
+        "high": 49.7,
+        "low": 48.1,
+        "close": 49.0,
+        "volume": 27610000,
+        "ts": datetime(2026, 9, 11, 18, 30),
+    }
 
     config = load_config()
     config = config.__class__(
@@ -129,8 +132,9 @@ def test_ingest_fundamentus_falha_silenciosa(tmp_path):
             "snapshot_dir": str(tmp_path / "snapshots"),
         }
     )
-    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-        rc = run_ingest(["PETR4"], config, ["financialData"], write_snapshot=False)
+    with patch("b3_etl.ingest._fetch_yfinance_snapshot", return_value=yf_payload), \
+         patch("urllib.request.urlopen", side_effect=OSError("simulando falha no Fundamentus")):
+        rc = run_ingest(["PETR4"], config, [], write_snapshot=False)
 
     assert rc == 0
     con = connect(db_path, read_only=True)

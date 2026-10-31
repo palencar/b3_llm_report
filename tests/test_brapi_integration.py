@@ -110,18 +110,31 @@ def test_extract_balance_sheet_itub4():
 
 def test_run_ingest_skip_db_writes_raw_file(tmp_path):
     """run_ingest --skip-db deve gravar arquivo raw JSON sem acessar DuckDB."""
-    fixture = _load_fixture("PETR4")
+    from datetime import datetime, timezone
+    from unittest.mock import patch
     config = load_config()
     config = config.__class__(
         **{**config.__dict__, "raw_dir": str(tmp_path / "raw")}
     )
-    with patch("urllib.request.urlopen", return_value=_make_urlopen_mock(fixture)):
-        rc = run_ingest(["PETR4"], config, ["financialData"], write_snapshot=False, skip_db=True)
+    yf_payload = {
+        "name": "PETROBRAS PN",
+        "sector": "Energy",
+        "industry": "Oil & Gas",
+        "currency": "BRL",
+        "open": 48.5,
+        "high": 49.7,
+        "low": 48.1,
+        "close": 49.0,
+        "volume": 27610000,
+        "ts": datetime(2026, 9, 11, 18, 30),
+    }
+    with patch("b3_etl.ingest._fetch_yfinance_snapshot", return_value=yf_payload):
+        rc = run_ingest(["PETR4"], config, [], write_snapshot=False, skip_db=True)
     assert rc == 0
-    raw_files = list((tmp_path / "raw" / "brapi" / "PETR4").iterdir())
+    raw_files = list((tmp_path / "raw" / "yfinance" / "PETR4").iterdir())
     assert len(raw_files) == 1
     saved = json.loads(raw_files[0].read_text())
-    assert saved["results"][0]["symbol"] == "PETR4"
+    assert saved["data"]["name"] == "PETROBRAS PN"
 
 
 # ---------------------------------------------------------------------------
@@ -137,11 +150,26 @@ def _init_db(db_path: str) -> None:
     con.close()
 
 
+def _mock_yf_payload(ticker="PETR4"):
+    from datetime import datetime
+    return {
+        "name": f"{ticker} Mock",
+        "sector": "Energy",
+        "industry": "Oil & Gas",
+        "currency": "BRL",
+        "open": 48.5,
+        "high": 49.7,
+        "low": 48.1,
+        "close": 49.0,
+        "volume": 27610000,
+        "ts": datetime(2026, 9, 11, 18, 30),
+    }
+
+
 def test_run_ingest_writes_to_db(tmp_path):
-    """run_ingest deve popular companies, fundamentals e prices no DuckDB."""
+    """run_ingest deve popular companies e prices no DuckDB (yfinance)."""
     db_path = str(tmp_path / "test.duckdb")
     _init_db(db_path)
-    fixture = _load_fixture("PETR4")
     config = load_config()
     config = config.__class__(
         **{
@@ -151,14 +179,12 @@ def test_run_ingest_writes_to_db(tmp_path):
             "snapshot_dir": str(tmp_path / "snapshots"),
         }
     )
-    with patch("urllib.request.urlopen", return_value=_make_urlopen_mock(fixture)):
-        rc = run_ingest(["PETR4"], config, ["financialData", "balanceSheetHistory", "incomeStatementHistory"], write_snapshot=False)
+    with patch("b3_etl.ingest._fetch_yfinance_snapshot", return_value=_mock_yf_payload()):
+        rc = run_ingest(["PETR4"], config, [], write_snapshot=False)
     assert rc == 0
     con = connect(db_path, read_only=True)
     rows = con.execute("SELECT ticker FROM companies WHERE ticker = 'PETR4'").fetchall()
     assert len(rows) == 1
-    fund_count = con.execute("SELECT COUNT(*) FROM fundamentals WHERE ticker = 'PETR4'").fetchone()[0]
-    assert fund_count > 0
     price_count = con.execute("SELECT COUNT(*) FROM prices WHERE ticker = 'PETR4'").fetchone()[0]
     assert price_count == 1
     con.close()
@@ -178,21 +204,12 @@ def test_run_ingest_three_tickers(tmp_path):
         }
     )
 
-    fixtures = {t: _load_fixture(t) for t in TICKERS}
-    call_count = {"n": 0}
+    def fake_yf(ticker):
+        return _mock_yf_payload(ticker)
 
-    def fake_urlopen(req, timeout=30):
-        if "brapi.dev" in req.full_url:
-            ticker = req.full_url.split("/quote/")[1].split("?")[0]
-            call_count["n"] += 1
-            return _make_urlopen_mock(fixtures[ticker])
-        # Fundamentus — simular falha silenciosa (sem DB write, sem quebrar o job)
-        raise OSError("fundamentus bloqueado no teste")
-
-    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-        rc = run_ingest(TICKERS, config, ["financialData"], write_snapshot=False)
+    with patch("b3_etl.ingest._fetch_yfinance_snapshot", side_effect=fake_yf):
+        rc = run_ingest(TICKERS, config, [], write_snapshot=False)
     assert rc == 0
-    assert call_count["n"] == 3
     con = connect(db_path, read_only=True)
     count = con.execute("SELECT COUNT(DISTINCT ticker) FROM companies").fetchone()[0]
     assert count == 3

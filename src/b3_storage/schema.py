@@ -6,7 +6,7 @@ REQUIRED_TABLES = [
     "raw_files",
     "cvm_companies",
     "cvm_statements",
-    "ticker_map",
+    "fundamentus_cache",
 ]
 
 # DDL de referencia (nao executado automaticamente).
@@ -97,5 +97,16 @@ CREATE TABLE IF NOT EXISTS ticker_map (
     name       TEXT,
     updated_at TIMESTAMP,
     PRIMARY KEY (cnpj, ticker)
+);
+
+-- fundamentus_cache: lossless snapshot of all Fundamentus fields as raw strings.
+
+CREATE TABLE IF NOT EXISTS fundamentus_cache (
+    ticker TEXT NOT NULL,
+    label TEXT NOT NULL,
+    value TEXT,
+    source TEXT DEFAULT 'fundamentus.com.br',
+    fetched_at TIMESTAMP,
+    PRIMARY KEY (ticker, label)
 );
 """.strip()

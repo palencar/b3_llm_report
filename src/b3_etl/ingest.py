@@ -8,6 +8,7 @@ from typing import Any, Optional
 from b3_core.config import Config
 from b3_core.log import log_info, log_error
 from b3_storage.db import connect, missing_tables, table_exists
+from b3_storage.fundamentus import save_cache as _save_cache
 from b3_etl.brapi import fetch_quote, BrapiError
 from b3_etl.fundamentus import fetch_page, parse_indicators, _FIELD_MAP
 
@@ -134,6 +135,42 @@ def _save_raw(payload: dict, raw_dir: str, source: str, ticker: str, fetched_at:
     return path, checksum, size_bytes
 
 
+def _fetch_yfinance_snapshot(ticker: str) -> dict:
+    """Busca snapshot de preço e metadata via yfinance (sufixo .SA para B3).
+
+    Retorna dict com: name, sector, industry, currency, open, high, low, close, volume, ts.
+    Levanta ValueError se não houver dados.
+    """
+    import yfinance as yf
+
+    yahoo_symbol = ticker if ticker.endswith(".SA") else f"{ticker}.SA"
+    stock = yf.Ticker(yahoo_symbol)
+    info = stock.info
+
+    hist = stock.history(period="5d")
+    if hist.empty:
+        raise ValueError(f"yfinance: sem histórico para {ticker}")
+
+    # Último dia com volume > 0 (dia de negociação concluído)
+    completed = hist[hist["Volume"] > 0]
+    if completed.empty:
+        completed = hist
+
+    row = completed.iloc[-1]
+    return {
+        "name": info.get("shortName") or info.get("longName") or ticker,
+        "sector": info.get("sector"),
+        "industry": info.get("industry"),
+        "currency": info.get("currency") or "BRL",
+        "open": float(row["Open"]) if row["Open"] > 0 else None,
+        "high": float(row["High"]) if row["High"] > 0 else None,
+        "low": float(row["Low"]) if row["Low"] > 0 else None,
+        "close": float(row["Close"]),
+        "volume": int(row["Volume"]),
+        "ts": completed.index[-1].to_pydatetime().replace(tzinfo=None),
+    }
+
+
 def _delete_then_insert(
     con,
     table: str,
@@ -235,6 +272,9 @@ def _ingest_fundamentus_ticker(
             [source, path, fetched_at, checksum, size_bytes],
             ["source", "path", "fetched_at", "checksum", "size_bytes"],
         )
+        # Write lossless cache for report reuse
+        if raw_indicators:
+            _save_cache(config.db_path, ticker, raw_indicators, fetched_at)
         con.execute("COMMIT")
     except Exception as exc:
         con.execute("ROLLBACK")
@@ -249,7 +289,7 @@ def run_ingest(
     skip_db: bool = False,
 ) -> int:
     fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    source = "brapi.dev"
+    source = "yfinance"
 
     if not tickers:
         log_error("etl_start", error="nenhum ticker informado")
@@ -269,9 +309,16 @@ def run_ingest(
     log_info("etl_start", tickers=tickers, modules=modules)
 
     for ticker in tickers:
+        # [BRAPI DESABILITADO 2026-09 — ver PROGRESSO.md]
+        # try:
+        #     data = fetch_quote(ticker, modules, config.brapi_base_url, config.brapi_key)
+        # except BrapiError as exc:
+        #     log_error("etl_ticker", ticker=ticker, error=str(exc))
+        #     continue
+
         try:
-            data = fetch_quote(ticker, modules, config.brapi_base_url, config.brapi_key)
-        except BrapiError as exc:
+            payload = _fetch_yfinance_snapshot(ticker)
+        except Exception as exc:
             log_error("etl_ticker", ticker=ticker, error=str(exc))
             continue
 
@@ -279,16 +326,17 @@ def run_ingest(
         rows_prices = 0
         ticker_start = time.time()
 
-        results = data.get("results") or []
-        if not results:
-            log_error("etl_ticker", ticker=ticker, error="resposta BRAPI sem resultados")
-            continue
-
-        payload = results[0]
-        currency = payload.get("currency")
+        currency = payload["currency"]
         last_update = fetched_at
 
-        raw_path, checksum, size_bytes = _save_raw(data, config.raw_dir, "brapi", ticker, fetched_at)
+        # salva snapshot yfinance como raw (auditável)
+        raw_payload = {
+            "source": "yfinance",
+            "ticker": ticker,
+            "fetched_at": fetched_at.isoformat(),
+            "data": {**payload, "ts": payload["ts"].isoformat()},
+        }
+        raw_path, checksum, size_bytes = _save_raw(raw_payload, config.raw_dir, "yfinance", ticker, fetched_at)
 
         if con and not missing:
             try:
@@ -301,9 +349,9 @@ def run_ingest(
                     [ticker],
                     [
                         ticker,
-                        payload.get("shortName") or payload.get("longName"),
-                        payload.get("sector"),
-                        payload.get("industry"),
+                        payload["name"],
+                        payload["sector"],
+                        payload["industry"],
                         last_update,
                         source,
                         fetched_at,
@@ -311,12 +359,8 @@ def run_ingest(
                     ["ticker", "name", "sector", "industry", "last_update", "source", "updated_at"],
                 )
 
-                # prices (apenas ultimo preco)
-                price_ts = payload.get("regularMarketTime")
-                if isinstance(price_ts, (int, float)):
-                    price_ts = datetime.fromtimestamp(price_ts, tz=timezone.utc).replace(tzinfo=None)
-                else:
-                    price_ts = fetched_at
+                # prices (último dia de negociação)
+                price_ts = payload["ts"]
 
                 _delete_then_insert(
                     con,
@@ -326,11 +370,11 @@ def run_ingest(
                     [
                         ticker,
                         price_ts,
-                        _safe_float(payload.get("regularMarketOpen")),
-                        _safe_float(payload.get("regularMarketDayHigh")),
-                        _safe_float(payload.get("regularMarketDayLow")),
-                        _safe_float(payload.get("regularMarketPrice")),
-                        payload.get("regularMarketVolume"),
+                        payload["open"],
+                        payload["high"],
+                        payload["low"],
+                        payload["close"],
+                        payload["volume"],
                         source,
                     ],
                     ["ticker", "ts", "open", "high", "low", "close", "volume", "source"],
@@ -338,64 +382,8 @@ def run_ingest(
 
                 rows_prices = 1
 
-                # fundamentals
-                fundamentals_records += _extract_statement_records(
-                    ticker,
-                    payload.get("financialData"),
-                    "snapshot",
-                    currency,
-                    source,
-                    fetched_at,
-                )
-                fundamentals_records += _extract_statement_records(
-                    ticker,
-                    payload.get("balanceSheetHistory"),
-                    "balance",
-                    currency,
-                    source,
-                    fetched_at,
-                )
-                fundamentals_records += _extract_statement_records(
-                    ticker,
-                    payload.get("incomeStatementHistory"),
-                    "income",
-                    currency,
-                    source,
-                    fetched_at,
-                )
-
-                for rec in fundamentals_records:
-                    _delete_then_insert(
-                        con,
-                        "fundamentals",
-                        ["ticker", "period", "statement_type", "key"],
-                        [
-                            rec["ticker"],
-                            rec["period"],
-                            rec["statement_type"],
-                            rec["key"],
-                        ],
-                        [
-                            rec["ticker"],
-                            rec["period"],
-                            rec["statement_type"],
-                            rec["key"],
-                            rec["value"],
-                            rec["currency"],
-                            rec["source"],
-                            rec["fetched_at"],
-                        ],
-                        [
-                            "ticker",
-                            "period",
-                            "statement_type",
-                            "key",
-                            "value",
-                            "currency",
-                            "source",
-                            "fetched_at",
-                        ],
-                    )
+                # fundamentals: BRAPI desabilitado — CVM + Fundamentus cobrem
+                # (fundamentals_records permanece vazio)
 
                 _delete_then_insert(
                     con,
@@ -412,7 +400,6 @@ def run_ingest(
                 log_error("etl_ticker", ticker=ticker, error=str(exc))
                 continue
 
-        # `continue` acima garante que só chegamos aqui se o bloco BRAPI foi commitado
         if con and not missing:
             _ingest_fundamentus_ticker(con, ticker, config, fetched_at)
 
@@ -432,3 +419,20 @@ def run_ingest(
     if con:
         con.close()
     return 0
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    from b3_core.config import load_config
+
+    parser = argparse.ArgumentParser(description="ETL de dados fundamentais B3")
+    parser.add_argument("tickers", nargs="+", help="Tickers (ex: PETR4 VALE3)")
+    parser.add_argument("--modules", nargs="*", default=[], help="Módulos BRAPI (vazio = todos)")
+    parser.add_argument("--no-snapshot", action="store_true", help="Não escrever snapshot")
+    parser.add_argument("--skip-db", action="store_true", help="Pular escrita no DB")
+    args = parser.parse_args()
+
+    config = load_config()
+    sys.exit(run_ingest(args.tickers, config, args.modules, not args.no_snapshot, args.skip_db))
