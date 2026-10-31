@@ -185,3 +185,42 @@ def test_validate_report_content_exige_identificacao_inicial_com_data_exata():
         assert False, "Era esperado erro de validacao"
     except ReportValidationError as exc:
         assert "identificacao inicial ausente ou incompleta" in str(exc)
+
+
+def test_run_report_inclui_historico_e_persiste_snapshot(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history_dir = tmp_path / "reports" / "PETR4"
+    history_dir.mkdir(parents=True)
+    previous_snapshot = history_dir / "2026-03-25_090000.md"
+    previous_snapshot.write_text("Analise anterior", encoding="utf-8")
+    structured = tmp_path / "reports" / "PETR4.json"
+    structured.write_text('{"relatorio": "anterior"}', encoding="utf-8")
+
+    config = SimpleNamespace(
+        db_path=str(tmp_path / "db.duckdb"),
+        llm_api_key="key",
+        openai_url_base="http://localhost:11434/v1",
+        ollama_url_base="",
+        llm_model="llama3.1",
+        report_history_n=4,
+        fund_ttl=86400,
+    )
+
+    with patch("b3_report.cli.load_dotenv"), \
+         patch("b3_report.cli.load_config", return_value=config), \
+         patch("b3_report.cli.get_yfinance_data", return_value="dados yf"), \
+         patch("b3_report.cli.get_complementary_data", return_value="dados fund"), \
+         patch("b3_report.cli.get_cvm_data", return_value="dados cvm"), \
+         patch("b3_report.cli.prepare_llm_investment_analysis_request", return_value="PROMPT") as mock_prompt, \
+         patch("b3_report.cli.get_investment_analysis", return_value=VALID_REPORT), \
+         patch("b3_report.cli.datetime") as mock_datetime:
+        mock_datetime.now.return_value = datetime(2026, 3, 26, 8, 15, 0)
+
+        result = run_report("petr4")
+
+    assert result == VALID_REPORT
+    assert mock_prompt.call_args.kwargs["history_reports"]
+    assert "Analise anterior" in mock_prompt.call_args.kwargs["history_reports"]
+    assert (tmp_path / "reports" / "PETR4.md").read_text(encoding="utf-8") == VALID_REPORT
+    assert not structured.exists()
+    assert (tmp_path / "reports" / "PETR4" / "2026-03-26_081500.md").read_text(encoding="utf-8") == VALID_REPORT

@@ -1,12 +1,19 @@
 import logging
 import os
 from datetime import datetime
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 from b3_core.config import load_config
 from b3_report.llm import get_investment_analysis, validate_llm_config, LLMError
 from b3_report.prompts import prepare_llm_investment_analysis_request
+from b3_report.reports import (
+    get_recent_reports_history,
+    save_report_snapshot,
+    write_report_file_atomic,
+)
+from b3_report.token_usage import token_usage_session
 from b3_report.sources.cvm import get_cvm_data
 from b3_report.sources.fundamentus import get_complementary_data
 from b3_report.sources.yfinance import get_yfinance_data
@@ -23,21 +30,32 @@ class ReportValidationError(RuntimeError):
     """Resposta do LLM fora do contrato esperado para persistencia."""
 
 
+@token_usage_session()
 def run_report(symbol: str) -> str:
     load_dotenv()
     config = load_config()
     validate_llm_config(config.llm_model, config.openai_url_base, config.ollama_url_base)
     normalized_symbol = symbol.upper()
-    analysis_date = datetime.now().strftime("%Y-%m-%d")
+    analysis_timestamp = datetime.now()
+    analysis_date = analysis_timestamp.strftime("%Y-%m-%d")
 
     yfinance_report = get_yfinance_data(f"{normalized_symbol}.SA")
-    complementary_report = get_complementary_data(normalized_symbol)
+    complementary_report = get_complementary_data(
+        normalized_symbol, db_path=config.db_path, ttl_seconds=config.fund_ttl
+    )
     cvm_report = get_cvm_data(normalized_symbol, config.db_path)
+    history_reports = get_recent_reports_history(
+        ticker=normalized_symbol,
+        report_dir="reports",
+        n=config.report_history_n,
+    )
+
     llm_prompt = prepare_llm_investment_analysis_request(
         yfinance_report,
         complementary_report,
         analysis_date,
         cvm_info=cvm_report,
+        history_reports=history_reports,
     )
     try:
         analysis = get_investment_analysis(
@@ -57,8 +75,15 @@ def run_report(symbol: str) -> str:
 
     os.makedirs("reports", exist_ok=True)
     report_path = os.path.join("reports", f"{normalized_symbol}.md")
-    with open(report_path, "w", encoding="utf-8") as file:
-        file.write(analysis)
+    write_report_file_atomic(report_path, analysis)
+    # O legado nao possui classificacao estruturada correspondente ao novo texto.
+    Path(report_path).with_suffix(".json").unlink(missing_ok=True)
+    save_report_snapshot(
+        ticker=normalized_symbol,
+        content=analysis,
+        analysis_timestamp=analysis_timestamp,
+        report_dir="reports",
+    )
     return analysis
 
 
