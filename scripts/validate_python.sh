@@ -5,18 +5,14 @@ python -m py_compile \
   main.py \
   init_db.py \
   ingest.py \
-  mcp_server.py \
   prepare_request.py \
   get_info_yfinance.py \
-  get_info_crawl4ai.py \
   src/b3_core/config.py \
   src/b3_core/log.py \
   src/b3_storage/db.py \
   src/b3_storage/schema.py \
   src/b3_etl/brapi.py \
   src/b3_etl/ingest.py \
-  src/b3_mcp/cache.py \
-  src/b3_mcp/app.py \
   src/b3_report/cli.py \
   src/b3_report/llm.py \
   src/b3_report/prompts.py \

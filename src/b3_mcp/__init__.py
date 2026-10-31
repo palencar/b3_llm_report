@@ -1,1 +1,0 @@
-"""Servidor MCP (read-only)."""
