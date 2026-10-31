@@ -4,7 +4,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from b3_core.config import load_config
-from b3_report.llm import get_investment_analysis
+from b3_report.llm import get_investment_analysis, validate_llm_config
 from b3_report.prompts import prepare_llm_investment_analysis_request
 from b3_report.sources.cvm import get_cvm_data
 from b3_report.sources.fundamentus import get_complementary_data
@@ -14,6 +14,7 @@ from b3_report.sources.yfinance import get_yfinance_data
 def run_report(symbol: str) -> str:
     load_dotenv()
     config = load_config()
+    validate_llm_config(config.llm_model, config.openai_url_base, config.ollama_url_base)
     normalized_symbol = symbol.upper()
     analysis_date = datetime.now().strftime("%Y-%m-%d")
 
@@ -28,9 +29,10 @@ def run_report(symbol: str) -> str:
     )
     analysis = get_investment_analysis(
         llm_prompt,
-        api_key=config.openai_api_key,
-        base_url=config.openai_url_base,
-        model=config.openai_model_name,
+        api_key=config.llm_api_key,
+        openai_url_base=config.openai_url_base,
+        ollama_url_base=config.ollama_url_base,
+        model=config.llm_model,
     )
 
     os.makedirs("reports", exist_ok=True)
