@@ -31,7 +31,6 @@ def test_load_config_queue_defaults():
     assert config.report_min_age_hours == 24.0
     assert config.queue_poll_seconds == 60
     assert config.queue_max_trigger_age_hours == 24.0
-    assert config.report_history_n == 4
     assert config.queue_request_interval_seconds == 60
     assert config.queue_error_cooldown_seconds == 900
 
@@ -40,12 +39,12 @@ def test_load_config_llm_variaveis_compartilhadas():
     from b3_core.config import load_config
 
     with patch.dict(os.environ, {
-        "LLM_API_KEY": "chave", "LLM_MODEL": "qwen3.6:80k",
+        "LLM_API_KEY": "chave", "LLM_MODEL": "modelo-simulado",
         "OLLAMA_URL_BASE": "http://localhost:11434", "OPENAI_URL_BASE": "",
     }, clear=True):
         config = load_config()
     assert config.llm_api_key == "chave"
-    assert config.llm_model == "qwen3.6:80k"
+    assert config.llm_model == "modelo-simulado"
     assert config.ollama_url_base == "http://localhost:11434"
     assert config.openai_url_base == ""
 
@@ -59,6 +58,13 @@ def test_config_sem_llm_permite_fluxos_sem_modelo():
     assert config.openai_url_base == config.ollama_url_base == ""
 
 
+def test_modelo_legado_nao_define_modelo_padrao():
+    from b3_core.config import load_config
+
+    with patch.dict(os.environ, {"OPENAI_MODEL_NAME": "modelo-legado"}, clear=True):
+        assert load_config().llm_model == ""
+
+
 def test_load_config_queue_from_env():
     """load_config deve ler queue vars do ambiente."""
     import sys
@@ -70,7 +76,6 @@ def test_load_config_queue_from_env():
         "REPORT_MIN_AGE_HOURS": "48",
         "QUEUE_POLL_SECONDS": "30",
         "QUEUE_MAX_TRIGGER_AGE_HOURS": "12",
-        "REPORT_HISTORY_N": "6",
         "QUEUE_REQUEST_INTERVAL_SECONDS": "120",
         "QUEUE_ERROR_COOLDOWN_SECONDS": "1800",
     }):
@@ -80,42 +85,17 @@ def test_load_config_queue_from_env():
     assert config.report_min_age_hours == 48.0
     assert config.queue_poll_seconds == 30
     assert config.queue_max_trigger_age_hours == 12.0
-    assert config.report_history_n == 6
     assert config.queue_request_interval_seconds == 120
     assert config.queue_error_cooldown_seconds == 1800
 
 
-def test_load_config_report_history_n_invalido_faz_fallback():
-    """load_config deve usar default para REPORT_HISTORY_N invalido."""
-    import sys
-    sys.path.insert(0, "src")
+
+
+
+
+
+def test_config_ignora_historico_do_fluxo_removido():
     from b3_core.config import load_config
 
-    with patch.dict(os.environ, {"REPORT_HISTORY_N": "0"}):
-        config = load_config()
-    assert config.report_history_n == 4
-
-def test_load_config_report_history_n_last_month():
-    """load_config deve aceitar 'last_month' para REPORT_HISTORY_N."""
-    import sys, os
-    from b3_core.config import load_config
-
-    with patch.dict(os.environ, {"REPORT_HISTORY_N": "last_month"}):
-        config = load_config()
-        assert config.report_history_n == "last_month"
-
-    with patch.dict(os.environ, {"REPORT_HISTORY_N": "LAST_MONTH"}):
-        config = load_config()
-        assert config.report_history_n == "last_month"
-
-
-def test_parse_history_n_last_month_case_insensitive():
-    """_parse_history_n deve ser case-insensitive para last_month."""
-    import sys, os
-    from b3_core.config import _parse_history_n
-    for val in ("last_month", "LAST_MONTH", "Last_Month"):
-        with patch.dict(os.environ, {"_TEST_PHN": val}):
-            assert _parse_history_n("_TEST_PHN", 4) == "last_month"
-    # numeric value should still parse normally
-    with patch.dict(os.environ, {"_TEST_PHN": "10"}):
-            assert _parse_history_n("_TEST_PHN", 4) == 10
+    with patch.dict(os.environ, {"REPORT_HISTORY_N": "last_month"}, clear=True):
+        assert not hasattr(load_config(), "report_history_n")

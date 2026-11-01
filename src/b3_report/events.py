@@ -310,3 +310,22 @@ def event_summary_lines(context):
         lines.append("Datas e horarios do Yahoo nao confirmados pelo RI.")
     lines.append("Calendario parcial: ausencia de registro nao significa ausencia de eventos.")
     return lines
+
+
+def event_question(question, context):
+    if context is None:
+        return question
+    instructions = question["instructions"] + (
+        " Considere event_context somente ate seu as_of. Evento proximo ou divulgacao "
+        "nao incorporada pode expor compradas e vendidas a descontinuidade em qualquer "
+        "horizonte que atravesse o evento. Nao infira direcao, perda ou classe de risco "
+        "apenas pela data; calendario nao substitui evidencias de preco, liquidez e saude financeira. "
+        "Ausencia de evento no calendario nao garante ausencia de eventos."
+    )
+    if context["policy_version"] not in _LEGACY_POLICIES:
+        instructions += (
+            " evento_antigo_verificacao_pendente indica cobertura historica nao verificada, "
+            "nao proximidade ou risco iminente. A expiracao do aviso nao comprova divulgacao "
+            "ou incorporacao e nao preenche evidencias ausentes."
+        )
+    return {**question, "instructions": instructions}

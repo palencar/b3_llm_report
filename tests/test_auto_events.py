@@ -168,6 +168,21 @@ def test_conhecimento_futuro_nao_e_injetado(tmp_path):
     assert context(tmp_path, "2026-10-21T18:00:00Z")["events"] == []
 
 
+def test_replay_de_snapshot_nao_le_cache_atual(tmp_path):
+    from b3_report.unified import classify_unified_snapshot
+    from b3_report.decision_snapshot import build_decision_snapshot
+    # Snapshot historico sem calendario continua sem calendario no replay.
+    snapshot = build_decision_snapshot(ticker="WEGE3", analysis_date="2026-10-13", yfinance_data={},
+                                       fundamentus_text="", cvm_rows=[])
+    before = deepcopy(snapshot)
+    context(tmp_path)
+    with patch("b3_report.events.load_event_context", side_effect=AssertionError("Nao ler calendario atual")):
+        result = classify_unified_snapshot(snapshot, model="modelo",
+                                   requester=Mock(side_effect=AssertionError("Gates insuficientes")))
+    assert "event_context" not in result
+    assert snapshot == before
+
+
 def test_contexto_auto_adulterado_e_rejeitado(tmp_path):
     result = context(tmp_path)
     result["events"][0]["status"] = "divulgado"
@@ -188,6 +203,35 @@ def test_recoleta_igual_nao_invalida_fila_apenas_pelo_horario(tmp_path):
     second = context(tmp_path, "2026-10-21T19:31:00Z", data(fetched="2026-10-21T19:30:00Z"))
     assert first["events"][0]["checked_at"] != second["events"][0]["checked_at"]
     assert event_token(first) == event_token(second)
+
+
+def test_coleta_do_snapshot_normaliza_e_preserva_metadados_sem_calendario(tmp_path):
+    from b3_report.decision_snapshot import collect_decision_snapshot
+    config = SimpleNamespace(raw_dir=str(tmp_path), db_path="simulado", fund_ttl=1)
+    payload = data()
+    fixed = datetime.fromisoformat("2026-10-21T19:01:00Z")
+    with patch("b3_report.sources.yfinance.extract_yfinance_info", return_value=json.dumps(payload)), \
+         patch("b3_report.sources.fundamentus.get_complementary_payload", return_value={"text": "", "indicators": {}, "fetched_at": None}), \
+         patch("b3_report.sources.cvm.fetch_raw_rows", return_value=[]), \
+         patch("b3_report.events.datetime", wraps=datetime) as clock:
+        clock.now.return_value = fixed
+        snapshot = collect_decision_snapshot("WEGE3", config, "2026-10-21")
+    assert snapshot["event_context"]["events"][0]["event_time"] == "17:00"
+    assert snapshot["source_data"]["yfinance"] == payload
+    assert snapshot["risk_evidence"] == {}
+
+
+def test_watcher_percebe_mudanca_de_fase_do_cache_sem_chamada_de_rede(tmp_path):
+    import watch_queue
+    config = SimpleNamespace(raw_dir=str(tmp_path), report_min_age_hours=24, llm_model="modelo",
+                             ollama_url_base="http://simulado", openai_url_base="")
+    before = context(tmp_path)
+    state_path = watch_queue.aligned_job_path(config, "WEGE3")
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({"event_state": event_token(before)}))
+    after = load_event_context(config, "WEGE3", as_of=datetime.fromisoformat("2026-10-21T20:00:00Z"))
+    with patch("watch_queue.load_event_context", return_value=after):
+        assert watch_queue._calendar_changed(config, "WEGE3", after)
 
 
 def test_formatador_legado_consumidor_recebe_mesmo_json_uma_vez():

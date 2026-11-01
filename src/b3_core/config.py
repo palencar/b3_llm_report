@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Literal
 import logging
 import os
 
@@ -69,7 +68,6 @@ class Config:
     report_min_age_hours: float
     queue_poll_seconds: int
     queue_max_trigger_age_hours: float
-    report_history_n: int | Literal["last_month"]
     queue_request_interval_seconds: int = 60
     queue_error_cooldown_seconds: int = 900
     corporate_events_file: str = ""
@@ -92,17 +90,7 @@ def load_config() -> Config:
         report_min_age_hours=_get_float("REPORT_MIN_AGE_HOURS", 24.0),
         queue_poll_seconds=_get_int("QUEUE_POLL_SECONDS", 60),
         queue_max_trigger_age_hours=_get_float("QUEUE_MAX_TRIGGER_AGE_HOURS", 24.0),
-        report_history_n=_parse_history_n("REPORT_HISTORY_N", 4),
         queue_request_interval_seconds=_get_positive_int("QUEUE_REQUEST_INTERVAL_SECONDS", 60),
         queue_error_cooldown_seconds=_get_positive_int("QUEUE_ERROR_COOLDOWN_SECONDS", 900),
         corporate_events_file=_get_env("CORPORATE_EVENTS_FILE", "").strip(),
     )
-
-_HISTORY_N_SENTINEL = "last_month"
-
-
-def _parse_history_n(name: str, default: int) -> int | Literal["last_month"]:
-    raw = os.getenv(name)
-    if raw is not None and raw.strip().lower() == "last_month":
-        return _HISTORY_N_SENTINEL
-    return _get_positive_int(name, default)

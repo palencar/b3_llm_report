@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from b3_report.events import (
-    active_event, event_lines, event_summary_lines, event_token, load_event_context, validate_event_context,
+    active_event, event_question, event_lines, event_summary_lines, event_token, load_event_context, validate_event_context,
 )
 
 
@@ -161,24 +161,16 @@ def test_eventos_duplicados_nao_sao_silenciosamente_conciliados(tmp_path):
         load(calendar(tmp_path, [event(), event()]))
 
 
-def test_relatorio_legado_recebe_contexto_e_persiste_aviso(tmp_path, monkeypatch):
-    from unittest.mock import Mock
-    from b3_report import cli
+
+
+def test_aviso_nao_altera_pergunta_sem_contexto_e_preserva_fonte(tmp_path):
     context = load(calendar(tmp_path))
-    config = SimpleNamespace(raw_dir=str(tmp_path / "raw"), ollama_url_base="http://simulado", openai_url_base="",
-        llm_model="texto", llm_api_key="", db_path="simulado", fund_ttl=1, report_history_n=1)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cli, "load_dotenv", Mock())
-    monkeypatch.setattr(cli, "load_config", Mock(return_value=config))
-    monkeypatch.setattr(cli, "load_event_context", Mock(return_value=context))
-    for name in ("get_yfinance_data", "get_complementary_data", "get_cvm_data", "get_recent_reports_history"):
-        monkeypatch.setattr(cli, name, Mock(return_value="dados simulados"))
-    monkeypatch.setattr(cli, "prepare_llm_investment_analysis_request", Mock(return_value="Prompt simulado"))
-    monkeypatch.setattr(cli, "_validate_report_content", Mock())
-    request = Mock(return_value="WEGE3 - relatorio simulado")
-    monkeypatch.setattr(cli, "get_investment_analysis", request)
-    report = cli.run_report("WEGE3")
-    assert "eventos-v2-experimental-7d" in request.call_args.args[0]
-    assert "evento proximo" in report
-    assert "WEGE3" in (tmp_path / "reports" / "WEGE3.md").read_text()
-    assert len(list((tmp_path / "raw" / "events" / "WEGE3").glob("*.json"))) == 1
+    assert active_event(context)
+    assert context["events"][0]["phase"] == "evento_proximo"
+    assert "descontinuidade" in " ".join(event_lines(context))
+    validate_event_context(context, "WEGE3", "2026-10-21")
+    q = {"type": "choice", "instructions": "Classifique", "criteria": {"A": "A", "B": "B"}}
+    before = deepcopy(q)
+    assert event_question(q, context)["criteria"] == q["criteria"]
+    assert "nao substitui evidencias de preco" in event_question(q, context)["instructions"]
+    assert event_question(q, None) == before == q

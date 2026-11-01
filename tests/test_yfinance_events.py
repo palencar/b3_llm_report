@@ -4,6 +4,7 @@ from unittest.mock import Mock, PropertyMock, patch
 import pytest
 
 from b3_report.sources.yfinance import EVENT_SOURCE_VERSION, extract_yfinance_info, format_yfinance_data
+from b3_report.decision_snapshot import build_decision_snapshot
 
 
 def extract(info):
@@ -30,6 +31,11 @@ def test_preserva_datas_e_intervalo_sem_requisicao_adicional():
     assert event["timestamps_utc"]["earningsTimestampStart"] != event["timestamps_utc"]["earningsTimestampEnd"]
     assert event["version"] == EVENT_SOURCE_VERSION
     assert "earningsTimestampStart" in format_yfinance_data(data)
+    snapshot = build_decision_snapshot(ticker="WEGE3", analysis_date="2026-10-21", yfinance_data=data,
+        fundamentus_text="", cvm_rows=[])
+    assert snapshot["source_data"]["yfinance"]["Event Metadata"] == event
+    assert "event_context" not in snapshot  # Nao fabrica calendario confirmado.
+    assert snapshot["risk_evidence"] == {}
 
 
 def test_ausencia_e_limitacao_da_resposta_nao_calendario_vazio_confirmado():

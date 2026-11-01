@@ -1,5 +1,4 @@
 from types import SimpleNamespace
-from datetime import datetime
 from unittest.mock import patch
 
 import httpx
@@ -32,45 +31,8 @@ def test_modelo_obrigatorio():
         validate_llm_config(" ", "http://servidor/v1", "")
 
 
-@pytest.mark.parametrize("openai_url,ollama_url", [
-    ("http://servidor/v1", ""), ("", "http://servidor"),
-])
-def test_relatorio_encaminha_configuracao_ao_cliente(tmp_path, monkeypatch, openai_url, ollama_url):
-    from b3_report.cli import run_report
-
-    monkeypatch.chdir(tmp_path)
-    config = SimpleNamespace(llm_api_key="chave-simulada", llm_model="modelo-simulado",
-                             openai_url_base=openai_url, ollama_url_base=ollama_url,
-                             db_path=str(tmp_path / "ausente.duckdb"), fund_ttl=86400,
-                             report_history_n=4, corporate_events_file="", raw_dir=str(tmp_path / "raw"))
-    text = ("#### Identificação\n- Empresa: Empresa simulada\n- Data da Análise: "
-            + datetime.now().strftime("%Y-%m-%d")
-            + "\n#### Resumo\n##### Curtíssimo Prazo\n##### Curto Prazo\n##### Médio Prazo\n")
-    with patch("b3_report.cli.load_dotenv"), \
-         patch("b3_report.cli.load_config", return_value=config), \
-         patch("b3_report.cli.get_yfinance_data", return_value=""), \
-         patch("b3_report.cli.get_complementary_data", return_value=""), \
-         patch("b3_report.cli.get_cvm_data", return_value=""), \
-         patch("b3_report.cli.prepare_llm_investment_analysis_request", return_value="PROMPT"), \
-         patch("b3_report.cli.get_investment_analysis", return_value=text) as sender:
-        assert run_report("petr4") == text
-    sender.assert_called_once_with("PROMPT", api_key="chave-simulada",
-                                   model="modelo-simulado", openai_url_base=openai_url,
-                                   ollama_url_base=ollama_url)
-    assert (tmp_path / "reports" / "PETR4.md").read_text(encoding="utf-8") == text
 
 
-def test_relatorio_rejeita_configuracao_ambigua_antes_da_coleta():
-    from b3_report.cli import run_report
-
-    config = SimpleNamespace(llm_model="modelo", openai_url_base="http://servidor/v1",
-                             ollama_url_base="http://servidor")
-    with patch("b3_report.cli.load_dotenv"), \
-         patch("b3_report.cli.load_config", return_value=config), \
-         patch("b3_report.cli.get_yfinance_data") as source:
-        with pytest.raises(LLMConfigurationError, match="exatamente uma"):
-            run_report("PETR4")
-    source.assert_not_called()
 
 
 def test_ollama_envia_esquema_e_preserva_metadados_sem_mudar_texto(capsys):
