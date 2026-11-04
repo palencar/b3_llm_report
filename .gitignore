@@ -7,6 +7,13 @@ data/
 venv/
 .venv/
 reports/
+/queue/
+/queue-test/
+/b3_storage.db
+/b3_storage.db.wal
+/notes/
+/graphify-out/
+/.opencode/
 PRD*.md
 PROGRESSO.md
 .idea/

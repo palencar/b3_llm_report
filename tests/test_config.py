@@ -3,6 +3,22 @@ import os
 from unittest.mock import patch
 
 
+def test_exemplo_minimo_ollama_sem_modelo_ou_credenciais():
+    from pathlib import Path
+    from dotenv import dotenv_values
+    from b3_core.config import load_config
+
+    example = dotenv_values(Path(__file__).resolve().parents[1] / ".env.example",
+                            interpolate=False)
+    assert example == {"OLLAMA_URL_BASE": "", "LLM_MODEL": "", "LLM_API_KEY": ""}
+    with patch.dict(os.environ, example, clear=True):
+        config = load_config()
+    assert config.openai_url_base == config.ollama_url_base == config.llm_model == ""
+    assert config.queue_dir == "queue"
+    assert config.raw_dir == os.path.join("data", "raw")
+    assert config.db_path == os.path.join("data", "duckdb", "b3_fundamentals.duckdb")
+
+
 def test_config_preserva_cache_fundamentus_sem_configuracao_mcp():
     from b3_core.config import load_config
 
