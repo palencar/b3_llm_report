@@ -3,6 +3,7 @@ import logging
 import argparse
 import json
 import os
+from pathlib import Path
 import re
 import sys
 import time
@@ -19,6 +20,7 @@ from b3_report.llm import validate_llm_config
 from b3_report.aligned_pipeline import aligned_job_path, run_aligned, should_run_aligned
 from b3_report.textual_baseline import format_report_markdown
 from b3_report.events import active_event, event_token, load_event_context
+from b3_report.queue_control import TickerBusy, processing_lock, read_request, request_path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,6 +56,11 @@ def _process_queue(config, *, structured_output=False) -> None:
         return
     try:
         entries = sorted(os.listdir(config.queue_dir))
+        requests = Path(config.queue_dir) / ".requests"
+        if requests.is_dir():
+            queued = {name.upper() for name in entries}
+            entries = sorted(entries + [path.stem for path in requests.glob("*.json")
+                                        if path.stem not in queued])
     except OSError:
         return
 
@@ -67,48 +74,68 @@ def _process_queue(config, *, structured_output=False) -> None:
     for name in entries:
         ticker = name.upper()
         filepath = os.path.join(config.queue_dir, name)
-        if not os.path.isfile(filepath):
+        if os.path.isdir(filepath):
             continue
         if not _TICKER_RE.match(ticker):
             _logger.warning("Ticker invalido na fila; item ignorado: %s", name)
             continue
 
-        queue_mtime = os.path.getmtime(filepath)
-        structured = {"structured_output": True} if structured_output else {}
         try:
-            # Um evento ativo pode reavaliar ticker ja presente, sem criar alertas.
-            context = load_event_context(config, ticker)
-            event_refresh = active_event(context) or _calendar_changed(config, ticker, context)
-            if not event_refresh and _is_stale_queue_trigger(filepath, queue_mtime, config.queue_max_trigger_age_hours):
-                continue
-            generate, reason = should_run_aligned(config, ticker, queue_mtime, **structured)
-        except (ValueError, FileNotFoundError) as exc:
-            _logger.error("Estado do relatorio invalido ticker=%s; item preservado e demais itens "
-                          "seguem. Detalhe: %s", ticker, exc)
-            _SKIPPED_TRIGGERS[filepath] = (queue_mtime, "controle invalido")
-            continue
-        if not generate:
-            _log_skip_once(filepath, ticker, queue_mtime, reason)
-            continue
-        _LAST_ATTEMPTED_ENTRY = name
-        failed = False
-        try:
-            outcome = run_aligned(ticker, config=config,
-                                  trigger_mtime=queue_mtime, reports_dir=REPORTS_DIR, **structured)
-            if "unified" in outcome["results"]:
-                print(format_report_markdown(outcome["results"]["unified"]), flush=True)
-            failed = bool(outcome["failed_modes"])
-        except Exception:
-            failed = True
-            _logger.exception("Falha no relatorio unificado ticker=%s; controle preservado.", ticker)
-        delay = config.queue_request_interval_seconds
-        if failed:
-            delay = max(delay, config.queue_error_cooldown_seconds)
-            _logger.error("Erro ao processar ticker=%s; fila pausada por %ds. Item preservado.", ticker, delay)
-        _NEXT_ATTEMPT_AT = time.monotonic() + delay
-        _IGNORED_STALE_TRIGGERS.pop(filepath, None)
-        _SKIPPED_TRIGGERS.pop(filepath, None)
-        return
+            with processing_lock(config.queue_dir, ticker):
+                if _process_entry(config, ticker, name, filepath, structured_output):
+                    return
+        except TickerBusy:
+            _logger.debug("Ativo em processamento ou registro de solicitacao; ignorado: %s", ticker)
+        except (OSError, ValueError) as exc:
+            _logger.error("Controle de fila invalido ticker=%s; item preservado. Detalhe: %s", ticker, exc)
+
+
+def _process_entry(config, ticker, name, filepath, structured_output):
+    global _NEXT_ATTEMPT_AT, _LAST_ATTEMPTED_ENTRY
+    request = read_request(config.queue_dir, ticker)
+    if not os.path.isfile(filepath) and request is None:
+        return False
+    queue_mtime = os.path.getmtime(filepath) if os.path.isfile(filepath) else request["requested_at"]
+    manual = {"request_id": request["id"]} if request else {}
+    structured = {"structured_output": True} if structured_output else {}
+    try:
+        # Um evento ativo pode reavaliar ticker ja presente, sem criar alertas.
+        context = load_event_context(config, ticker)
+        event_refresh = active_event(context) or _calendar_changed(config, ticker, context)
+        if not request and not event_refresh and _is_stale_queue_trigger(filepath, queue_mtime, config.queue_max_trigger_age_hours):
+            return False
+        generate, reason = should_run_aligned(config, ticker, queue_mtime, **structured, **manual)
+    except (ValueError, FileNotFoundError) as exc:
+        _logger.error("Estado do relatorio invalido ticker=%s; item preservado e demais itens "
+                      "seguem. Detalhe: %s", ticker, exc)
+        _SKIPPED_TRIGGERS[filepath] = (queue_mtime, "controle invalido")
+        return False
+    if not generate:
+        if request and reason == "solicitacao manual ja concluida":
+            request_path(config.queue_dir, ticker).unlink()
+        _log_skip_once(filepath, ticker, queue_mtime, reason)
+        return False
+    _LAST_ATTEMPTED_ENTRY = name
+    failed = False
+    try:
+        outcome = run_aligned(ticker, config=config, trigger_mtime=queue_mtime,
+                              reports_dir=REPORTS_DIR, **structured, **manual)
+        if "unified" in outcome["results"]:
+            print(format_report_markdown(outcome["results"]["unified"]), flush=True)
+        failed = bool(outcome["failed_modes"])
+        if request and not failed:
+            request_path(config.queue_dir, ticker).unlink()
+    except Exception:
+        failed = True
+        _logger.exception("Falha no relatorio unificado ticker=%s; controle preservado.", ticker)
+    delay = config.queue_request_interval_seconds
+    if failed:
+        delay = max(delay, config.queue_error_cooldown_seconds)
+        _logger.error("Erro ao processar ticker=%s; fila pausada por %ds. Item preservado.", ticker, delay)
+    _NEXT_ATTEMPT_AT = time.monotonic() + delay
+    _IGNORED_STALE_TRIGGERS.pop(filepath, None)
+    _SKIPPED_TRIGGERS.pop(filepath, None)
+    return True
 
 
 def _log_skip_once(filepath: str, ticker: str, queue_mtime: float, reason: str) -> None:

@@ -73,6 +73,90 @@ def test_unificado_preserva_snapshot_e_publica_frontmatter(config, tmp_path, sna
     assert "models" not in state and "modes" not in state
 
 
+def test_pedido_obrigatorio_ignora_idade_e_mtime_e_nao_repete_concluido(config, tmp_path, monkeypatch):
+    run(config, tmp_path, trigger_mtime=100)
+    config.report_min_age_hours = 999999
+    assert not pipeline.should_run_aligned(config, "WEGE3", 100)[0]
+    request_id = "a" * 32
+    assert pipeline.should_run_aligned(config, "WEGE3", 100, request_id=request_id)[0]
+    second = run(config, tmp_path, trigger_mtime=100, request_id=request_id)
+    assert second["attempted"] == ["unified"]
+    assert pipeline.collect_decision_snapshot.call_count == 2
+    state = json.loads(Path(second["manifest_path"]).read_text())
+    assert state["request_id"] == request_id
+    assert not pipeline.should_run_aligned(config, "WEGE3", 100, request_id=request_id)[0]
+    assert pipeline.should_run_aligned(config, "WEGE3", 100, request_id="b" * 32)[0]
+
+
+def test_pedido_manual_retoma_pendencia_sem_descartar_snapshot(config, tmp_path, monkeypatch):
+    first = run(config, tmp_path, trigger_mtime=100, textual_requester=lambda p: "{}")
+    monkeypatch.setattr(pipeline, "collect_decision_snapshot", Mock(side_effect=AssertionError("Sem recoleta")))
+    second = run(config, tmp_path, trigger_mtime=200, request_id="a" * 32)
+    assert not second["failed_modes"]
+    state = json.loads(Path(second["manifest_path"]).read_text())
+    assert state["dataset_id"] == first["dataset_id"]
+    assert state["trigger_mtime"] == 100
+    assert state["request_id"] == "a" * 32
+
+
+@pytest.mark.parametrize("request_id", ["invalido", True])
+def test_pedido_invalido_nao_coleta(config, tmp_path, request_id):
+    with pytest.raises(ValueError, match="identificador valido"):
+        run(config, tmp_path, trigger_mtime=100, request_id=request_id)
+    pipeline.collect_decision_snapshot.assert_not_called()
+
+
+def test_pedido_exige_escopo_de_fila(config, tmp_path):
+    with pytest.raises(ValueError, match="exige fila"):
+        run(config, tmp_path, request_id="a" * 32)
+    pipeline.collect_decision_snapshot.assert_not_called()
+
+
+def test_watcher_e_pedido_manual_com_pipeline_real_simulado(config, tmp_path, monkeypatch):
+    from functools import partial
+    from b3_report.queue_control import enqueue_request, request_path
+    import watch_queue as watcher
+
+    config.queue_dir = str(tmp_path / "queue")
+    config.queue_max_trigger_age_hours = 24
+    config.queue_request_interval_seconds = 60
+    config.queue_error_cooldown_seconds = 900
+    config.report_min_age_hours = 999999
+    monkeypatch.setattr(watcher, "REPORTS_DIR", str(tmp_path / "reports"))
+    monkeypatch.setattr(watcher, "_LAST_ATTEMPTED_ENTRY", None)
+    monkeypatch.setattr(watcher, "_NEXT_ATTEMPT_AT", 0)
+    monkeypatch.setattr(watcher, "load_event_context", lambda *args: None)
+    monkeypatch.setattr(watcher, "run_aligned", partial(pipeline.run_aligned, textual_requester=sender))
+    first = run(config, tmp_path, trigger_mtime=100)
+    enqueue_request(config.queue_dir, "WEGE3")
+    path = request_path(config.queue_dir, "WEGE3")
+    # Simula pedido antigo apos longo periodo com o watcher parado.
+    request = json.loads(path.read_text())
+    request["requested_at"] = 100
+    path.write_text(json.dumps(request))
+    watcher._process_queue(config)
+    assert not path.exists()
+    state = json.loads(Path(first["manifest_path"]).read_text())
+    assert state["execution"]["status"] == "done"
+    assert state["request_id"] == request["id"]
+    assert pipeline.collect_decision_snapshot.call_count == 2
+    # Simula interrupcao depois de gravar done, antes de retirar o pedido.
+    path.write_text(json.dumps(request))
+    monkeypatch.setattr(watcher, "_NEXT_ATTEMPT_AT", 0)
+    watcher._process_queue(config)
+    assert not path.exists()
+    assert pipeline.collect_decision_snapshot.call_count == 2
+
+
+def test_pedido_novo_nao_ignora_configuracao_incompativel_pendente(config, tmp_path):
+    run(config, tmp_path, trigger_mtime=100, textual_requester=lambda p: "{}")
+    config.llm_model = "outro-modelo"
+    before = pipeline.aligned_job_path(config, "WEGE3").read_bytes()
+    with pytest.raises(ValueError, match="Configuracao alterada com execucao pendente"):
+        pipeline.should_run_aligned(config, "WEGE3", 100, request_id="a" * 32)
+    assert pipeline.aligned_job_path(config, "WEGE3").read_bytes() == before
+
+
 def test_falha_preserva_publicacao_e_retoma_sem_recoleta(config, tmp_path, monkeypatch):
     reports = tmp_path / "reports"
     reports.mkdir()

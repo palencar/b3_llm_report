@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""Consulta de relatorios e solicitacao de atualizacao pela fila local."""
+
+import argparse
+from pathlib import Path
+import re
+import sys
+
+
+def _symbol(value):
+    symbol = value.upper()
+    if re.fullmatch(r"[A-Z0-9]{3,6}", symbol) is None:
+        raise argparse.ArgumentTypeError("Simbolo invalido; use de 3 a 6 letras ou numeros.")
+    return symbol
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Consultar ou solicitar relatorios.")
+    commands = parser.add_subparsers(dest="operation", required=True)
+    consult = commands.add_parser("consultar", help="Ler o ultimo relatorio publicado.")
+    consult.add_argument("symbol", type=_symbol, help="Simbolo de negociacao, como WEGE3.")
+    consult.add_argument("--diretorio-relatorios", type=Path, default=Path("reports"),
+                         help="Diretorio no host; padrao: reports no diretorio atual.")
+    output = consult.add_mutually_exclusive_group()
+    output.add_argument("--somente-conteudo", action="store_true", help="Imprimir apenas o Markdown.")
+    output.add_argument("--somente-caminho", action="store_true", help="Imprimir apenas o caminho absoluto.")
+    generate = commands.add_parser("gerar", help="Solicitar atualizacao obrigatoria pelo watcher.")
+    generate.add_argument("symbol", type=_symbol, help="Simbolo de negociacao, como WEGE3.")
+    generate.add_argument("--diretorio-fila", type=Path, default=Path("queue"),
+                          help="Fila compartilhada no host; padrao: queue no diretorio atual.")
+    args = parser.parse_args(argv)
+
+    if args.operation == "gerar":
+        # Consulta permanece independente dos modulos do gerador e do .env.
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+        from b3_report.queue_control import TickerBusy, enqueue_request, processing_lock
+
+        try:
+            with processing_lock(args.diretorio_fila, args.symbol):
+                created = enqueue_request(args.diretorio_fila, args.symbol)
+        except TickerBusy:
+            print(f"{args.symbol} ja esta em processamento ou em registro de solicitacao; "
+                  "nenhuma nova solicitacao criada.")
+            return 0
+        except (OSError, ValueError) as exc:
+            print(f"Falha ao solicitar relatorio de {args.symbol}: {exc}", file=sys.stderr)
+            return 1
+        status = "registrada" if created else "ja registrada"
+        print(f"Solicitacao {status} para {args.symbol}. Aguarda processamento pelo watcher.")
+        print("Estado do servico nao verificado; nenhum container iniciado.")
+        return 0
+
+    try:
+        path = args.diretorio_relatorios.resolve() / f"{args.symbol}.md"
+        if not path.is_file():
+            print(f"Relatorio nao encontrado para {args.symbol}: {path}", file=sys.stderr)
+            return 1
+        if args.somente_caminho:
+            print(path)
+        else:
+            content = path.read_text(encoding="utf-8")
+            sys.stdout.write(content)
+            if not args.somente_conteudo:
+                print(f"Relatorio: {path}", file=sys.stderr)
+    except (OSError, UnicodeError, RuntimeError) as exc:
+        print(f"Falha ao consultar relatorio de {args.symbol}: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

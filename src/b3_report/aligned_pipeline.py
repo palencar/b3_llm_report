@@ -130,6 +130,9 @@ def _load_job(config, ticker, structured_output=False, *, scope="queue",
         raise ValueError(f"Estado do relatorio invalido: {path}")
     if job["identity"] != _digest(job["configuration"]):
         raise ValueError(f"Identidade da configuracao divergente no estado: {path}")
+    if "request_id" in job and (not isinstance(job["request_id"], str)
+                                or re.fullmatch(r"[0-9a-f]{32}", job["request_id"]) is None):
+        raise ValueError(f"Identificador de solicitacao invalido no estado: {path}")
     snapshot = job.get("snapshot")
     validate_snapshot(snapshot)
     if snapshot["ticker"] != ticker or snapshot_id(snapshot) != job.get("dataset_id"):
@@ -162,13 +165,17 @@ def _load_job(config, ticker, structured_output=False, *, scope="queue",
     return job
 
 
-def should_run_aligned(config, ticker, trigger_mtime, structured_output=False):
+def should_run_aligned(config, ticker, trigger_mtime, structured_output=False, *, request_id=None):
     job = _load_job(config, ticker,
                     structured_output=structured_output, preserve_completed=True)
     if job is None:
         return True, "relatorio unificado ausente"
     if job["execution"]["status"] == "pending":
         return True, "retomar relatorio pendente no snapshot preservado"
+    if request_id is not None:
+        if job.get("request_id") == request_id:
+            return False, "solicitacao manual ja concluida"
+        return True, "atualizacao obrigatoria solicitada"
     context = load_event_context(config, ticker)
     if context is not None and event_token(context) != job.get("event_state"):
         return True, "calendario ou fase de evento alterado"
@@ -192,7 +199,7 @@ def _validate_identity(result, snapshot, model):
 @token_usage_session()
 def run_aligned(symbol, *, snapshot_path=None, config=None, trigger_mtime=None,
                 reports_dir="reports", textual_requester=None,
-                structured_output=False):
+                structured_output=False, request_id=None):
     if config is None:
         load_dotenv()
         config = load_config()
@@ -205,6 +212,9 @@ def run_aligned(symbol, *, snapshot_path=None, config=None, trigger_mtime=None,
     if trigger_mtime is not None and (type(trigger_mtime) not in (int, float) or not math.isfinite(trigger_mtime)):
         raise ValueError("Data do alerta invalida para o relatorio unificado.")
     scope = "queue" if trigger_mtime is not None else "manual"
+    if request_id is not None and (scope != "queue" or not isinstance(request_id, str)
+                                   or re.fullmatch(r"[0-9a-f]{32}", request_id) is None):
+        raise ValueError("Solicitacao obrigatoria exige fila e identificador valido.")
     current = _load_job(config, symbol,
                         structured_output=structured_output, scope=scope)
     pending = current and current["execution"]["status"] == "pending"
@@ -215,7 +225,9 @@ def run_aligned(symbol, *, snapshot_path=None, config=None, trigger_mtime=None,
     state_path = _state_path(config, symbol, scope).resolve()
     if job and job["execution"]["status"] == "done":
         context = load_event_context(config, symbol)
-        if trigger_mtime > job["trigger_mtime"] or (context is not None and event_token(context) != job.get("event_state")):
+        if ((request_id is not None and job.get("request_id") != request_id)
+                or trigger_mtime > job["trigger_mtime"]
+                or (context is not None and event_token(context) != job.get("event_state"))):
             job = None
     if job:
         snapshot = deepcopy(job["snapshot"])
@@ -239,6 +251,10 @@ def run_aligned(symbol, *, snapshot_path=None, config=None, trigger_mtime=None,
                "execution": {"status": "pending"}}
         if structured_output:
             job["structured_output"] = "on"
+        write_report_file_atomic(state_path, json.dumps(job))
+    if request_id is not None and job.get("request_id") != request_id:
+        # Uma pendencia existente e retomada, sem descartar o snapshot preservado.
+        job["request_id"] = request_id
         write_report_file_atomic(state_path, json.dumps(job))
     _logger.info("Relatorio unificado ticker=%s dataset_id=%s data=%s", symbol, job["dataset_id"],
                  snapshot["analysis_date"])

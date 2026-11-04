@@ -2,6 +2,7 @@
 set -euo pipefail
 
 python -m py_compile \
+  relatorio \
   main.py \
   watch_queue.py \
   init_db.py \
@@ -16,6 +17,7 @@ python -m py_compile \
   src/b3_etl/ingest.py \
   src/b3_report/llm.py \
   src/b3_report/reports.py \
+  src/b3_report/queue_control.py \
   src/b3_report/token_usage.py \
   src/b3_report/assessment.py \
   src/b3_report/decision_snapshot.py \

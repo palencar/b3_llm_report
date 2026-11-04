@@ -143,3 +143,101 @@ def test_detecta_mudanca_de_evento_no_estado_unico(config, monkeypatch):
     monkeypatch.setattr(watcher, "event_token", lambda context: context["token"])
     assert watcher._calendar_changed(config, "WEGE3", {"token": "atual"})
     assert not watcher._calendar_changed(config, "WEGE3", {"token": "anterior"})
+
+
+def manual_request(config, ticker):
+    from b3_report.queue_control import enqueue_request, read_request
+
+    enqueue_request(config.queue_dir, ticker)
+    return read_request(config.queue_dir, ticker)
+
+
+def test_solicitacao_obrigatoria_sem_alerta_processa_e_remove_pedido(config):
+    from b3_report.queue_control import request_path
+
+    request = manual_request(config, "WEGE3")
+    watcher._process_queue(config)
+    watcher.should_run_aligned.assert_called_once_with(
+        config, "WEGE3", request["requested_at"], request_id=request["id"])
+    watcher.run_aligned.assert_called_once_with(
+        "WEGE3", config=config, trigger_mtime=request["requested_at"],
+        reports_dir=watcher.REPORTS_DIR, request_id=request["id"])
+    assert not request_path(config.queue_dir, "WEGE3").exists()
+
+
+def test_solicitacao_obrigatoria_nao_expira_e_preserva_alerta(config):
+    path = trigger(config, "wege3", 1000000 - 7 * 86400)
+    manual_request(config, "WEGE3")
+    watcher._process_queue(config)
+    assert watcher.run_aligned.call_count == 1
+    assert path.stat().st_mtime == 1000000 - 7 * 86400
+
+
+@pytest.mark.parametrize("failure", ["excecao", "resultado"])
+def test_pedido_manual_preservado_apos_falha(config, failure):
+    from b3_report.queue_control import read_request
+
+    request = manual_request(config, "WEGE3")
+    if failure == "excecao":
+        watcher.run_aligned.side_effect = RuntimeError("Falha simulada")
+    else:
+        watcher.run_aligned.return_value = {"results": {}, "failed_modes": ["unified"]}
+    watcher._process_queue(config)
+    assert read_request(config.queue_dir, "WEGE3") == request
+    assert watcher._NEXT_ATTEMPT_AT == 1000
+
+
+def test_pedido_ja_concluido_remove_marcador_sem_nova_chamada(config):
+    from b3_report.queue_control import request_path
+
+    manual_request(config, "WEGE3")
+    watcher.should_run_aligned.return_value = (False, "solicitacao manual ja concluida")
+    watcher._process_queue(config)
+    watcher.run_aligned.assert_not_called()
+    assert not request_path(config.queue_dir, "WEGE3").exists()
+
+
+def test_watcher_bloqueia_ativo_durante_execucao(config):
+    from b3_report.queue_control import TickerBusy, processing_lock
+
+    trigger(config, "WEGE3")
+    def execute(*args, **kwargs):
+        with pytest.raises(TickerBusy):
+            with processing_lock(config.queue_dir, "WEGE3"):
+                pytest.fail("Ativo nao protegido durante processamento")
+        return {"results": {}, "failed_modes": []}
+    watcher.run_aligned.side_effect = execute
+    watcher._process_queue(config)
+    assert watcher.run_aligned.call_count == 1
+
+
+def test_ativo_ocupado_nao_impede_proximo(config):
+    from b3_report.queue_control import processing_lock
+
+    trigger(config, "ABEV3")
+    trigger(config, "WEGE3")
+    with processing_lock(config.queue_dir, "ABEV3"):
+        watcher._process_queue(config)
+    assert watcher.run_aligned.call_args.args[0] == "WEGE3"
+
+
+def test_pedido_corrompido_nao_impede_proximo(config, caplog):
+    from b3_report.queue_control import request_path
+
+    path = request_path(config.queue_dir, "ABEV3")
+    path.parent.mkdir()
+    path.write_text("{")
+    trigger(config, "WEGE3")
+    watcher._process_queue(config)
+    assert watcher.run_aligned.call_args.args[0] == "WEGE3"
+    assert "Controle de fila invalido ticker=ABEV3" in caplog.text
+    assert path.read_text() == "{"
+
+
+def test_solicitacao_nao_muda_ordem_circular_nem_antecipa_cooldown(config):
+    manual_request(config, "WEGE3")
+    trigger(config, "ABEV3")
+    watcher._process_queue(config)
+    assert watcher.run_aligned.call_args.args[0] == "ABEV3"
+    watcher._process_queue(config)
+    assert watcher.run_aligned.call_count == 1
