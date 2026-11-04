@@ -1,5 +1,4 @@
 -r requirements.txt
--r requirements-etl.txt
 
 # Versoes compativeis com os clientes e o DuckDB atuais.
 httpx==0.27.2

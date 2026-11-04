@@ -13,7 +13,7 @@ RUN apt-get update \
     && groupadd --gid 1000 app \
     && useradd --uid 1000 --gid app --create-home app
 
-COPY requirements.txt requirements-etl.txt requirements-docker.txt ./
+COPY requirements.txt requirements-docker.txt ./
 RUN pip install --no-cache-dir -r requirements-docker.txt \
     && pip check
 

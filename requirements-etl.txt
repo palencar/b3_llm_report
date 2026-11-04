@@ -1,4 +1,0 @@
-duckdb==0.10.2
-httpx>=0.27,<1.0
-pandas>=2.2,<3.0
-yfinance==0.2.49
