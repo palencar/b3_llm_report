@@ -19,7 +19,7 @@ from b3_report.rubric import (
 
 # Identificador legado da configuracao persistida, nao uma segunda rota de geracao.
 BASELINE_FORMAT_VERSION = "baseline-textual-v4-sem-probabilidades"
-REPORT_PRESENTATION_VERSION = "relatorio-markdown-v6-frontmatter"
+REPORT_PRESENTATION_VERSION = "relatorio-markdown-v7-aviso-experimental"
 HORIZON_TITLES = {"curtissimo": "Curtissimo prazo", "curto": "Curto prazo", "medio": "Medio prazo"}
 _STATUS_TITLES = {"dados_insuficientes": "Dados insuficientes", "erro": "Erro",
                   "nao_aplicavel": "Nao aplicavel"}
@@ -185,7 +185,9 @@ def format_report_markdown(result: dict) -> str:
     lines = [format_frontmatter(result), "",
              f"{result['ticker']} - {result['analysis_date']}", "",
              f"# Relatorio de investimento - {result['ticker']}", "",
-             f"Modelo: {result['model']}"]
+             f"Modelo: {result['model']}", "",
+             "> Aviso: projeto experimental. Este relatorio nao constitui recomendacao "
+             "de investimento nem orientacao financeira personalizada."]
     lines.extend(_summary_lines(result))
     rows = result["horizons"].values()
     if any(row["investment"].get("class") == "Neutro" for row in rows):

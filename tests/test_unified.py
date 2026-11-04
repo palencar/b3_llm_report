@@ -178,6 +178,6 @@ def test_relatorio_unificado_renderiza_o_texto_do_modelo(snapshot):
     markdown = format_report_markdown(unified)
     assert markdown.startswith('---\nsimbolo: "WEGE3"\n')
     assert "- **Investimento:** Compra forte. Relatorio simulado do horizonte." in markdown
-    assert unified["presentation_version"] == "relatorio-markdown-v6-frontmatter"
+    assert unified["presentation_version"] == "relatorio-markdown-v7-aviso-experimental"
     assert "<details>" not in markdown and "<summary>" not in markdown
     assert "Snapshot:" not in markdown and "Rubrica:" not in markdown

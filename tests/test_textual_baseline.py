@@ -95,7 +95,10 @@ def test_relatorio_markdown_estrutura_e_conteudo(snapshot):
     assert "Rubrica:" not in text and "Instrucoes:" not in text
     assert "Snapshot:" not in text and "Apresentacao:" not in text
     assert "<details>" not in text and "<summary>" not in text
-    assert result["presentation_version"] == "relatorio-markdown-v6-frontmatter"
+    assert result["presentation_version"] == "relatorio-markdown-v7-aviso-experimental"
+    assert text.count("> Aviso: projeto experimental.") == 1
+    assert text.index("> Aviso: projeto experimental.") < text.index("## Resumo")
+    assert "nao constitui recomendacao de investimento nem orientacao financeira personalizada." in text
     assert not any(line.startswith("curtissimo:") for line in lines)
 
 
@@ -124,6 +127,19 @@ def test_avisos_contextuais_e_neutro_sem_repeticao(snapshot, choices):
             assert result["horizons"][h]["risk"]["reason"] == (
                 "Neutro: encerrar eventual posicao e ficar sem posicao no horizonte.")
     assert result == before
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_aviso_presente_em_insuficiencia_e_erro_sem_alterar_dados(snapshot, failure):
+    if not failure:
+        snapshot["evidence"] = {}
+    result = classify_unified_snapshot(snapshot, model="simulado",
+        requester=Mock(side_effect=LLMRequestError("Falha simulada.")))
+    before = deepcopy(result)
+    text = format_report_markdown(result)
+    assert text.count("> Aviso: projeto experimental.") == 1
+    assert result == before
+    assert "Aviso" not in json.dumps(report_frontmatter(result))
 
 
 def test_relatorio_markdown_deterministico(snapshot):
