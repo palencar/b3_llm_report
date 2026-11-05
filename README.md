@@ -186,7 +186,9 @@ No modo unificado descrito abaixo, a unidade da varredura e um ticker. As etapas
 
 Com filas grandes, ajuste `QUEUE_MAX_TRIGGER_AGE_HOURS` para cobrir o tempo de processamento: triggers que ultrapassarem essa idade serao ignorados, inclusive apos pausas. Alterar o `.env` exige recriar o container com `--env-file`; `docker restart` conserva o ambiente original.
 
-Para uma execucao pontual, pare a fila e utilize a mesma imagem. Acrescente ao `docker run` as mesmas opcoes de rede usadas pelo watcher, se houver:
+Reconstruir ou carregar uma imagem nao atualiza containers ja criados: `docker start` e `docker restart` conservam a imagem original. Depois de validar uma nova imagem isoladamente, para promove-la pare e remova o container de producao e recrie-o com o comando da fila, os mesmos mounts, ambiente e opcoes de rede. Banco, estados e relatorios devem continuar nos diretorios persistentes do host. Reiniciar o container antigo apenas restaura a versao anterior; nao promove a imagem testada.
+
+Para uma execucao pontual, pare a fila e utilize a mesma imagem. Acrescente ao `docker run` as mesmas opcoes de rede usadas pelo watcher, se houver. O `docker start` no final deste exemplo retoma o container existente, nao o atualiza:
 
 ```bash
 docker stop --time 60 b3-report
@@ -437,6 +439,18 @@ Para instalar as dependencias de desenvolvimento e executar a suite:
 pip install -r requirements-dev.txt
 pytest tests/ -v
 ```
+
+### Validacao manual da interface
+
+Use um unico ativo e diretorios de fila, estados e relatorios separados dos de producao. Se copiar um banco existente, pare antes todos os processos que o utilizam e copie-o fechado. As chamadas reais devem ser executadas pelo operador quando houver disponibilidade.
+
+1. Consulte um relatorio existente e confira conteudo, caminho e as opcoes de saida isoladas, sem depender do watcher ativo.
+2. Registre um pedido na fila isolada com o container parado. Repita o comando antes de iniciar: deve informar que o pedido ja existe. Inicie o watcher de teste com os mounts e a conectividade corretos e aguarde a conclusao.
+3. Confira o Markdown com aviso experimental, `execution.status=done` no estado e a retirada do pedido. Isso valida a geracao inicial, nao o desvio da idade minima.
+4. Solicite novamente o mesmo ativo apos a conclusao, sem reduzir `REPORT_MIN_AGE_HOURS`. Aguarde a nova conclusao e confira um novo `request_id` e `completed_at` no estado, mesmo que dados e classificacoes nao mudem. Essa segunda execucao valida a atualizacao obrigatoria de um relatorio recente.
+5. Durante uma geracao ativa, outro comando gerar para o mesmo ativo deve informar processamento sem criar pedido adicional. Teste interrupcao/retomada em uma rodada separada, preservando estado e snapshot.
+
+Ao encerrar, escolha explicitamente entre restaurar o container anterior ou promover a nova imagem conforme a secao Docker. Nao interprete `docker start` como atualizacao.
 
 ## Limitações atuais
 
