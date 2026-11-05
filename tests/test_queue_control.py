@@ -5,7 +5,7 @@ import sys
 import pytest
 
 from b3_report.queue_control import (
-    TickerBusy, enqueue_request, processing_lock, read_request, request_path,
+    TickerBusy, enqueue_request, processing_lock, read_request, request_lock, request_path,
 )
 
 
@@ -26,8 +26,21 @@ def test_lock_independente_por_ativo(tmp_path):
     assert read_request(tmp_path, "ABEV3") is not None
 
 
-def test_morte_do_processo_libera_lock_sem_remover_arquivo(tmp_path):
-    path = tmp_path / ".locks" / "WEGE3"
+def test_controle_curto_e_geracao_sao_bloqueios_distintos(tmp_path):
+    with request_lock(tmp_path, "WEGE3"):
+        with pytest.raises(TickerBusy):
+            with request_lock(tmp_path, "WEGE3"):
+                pytest.fail("Controle concorrente permitido")
+        with processing_lock(tmp_path, "WEGE3"):
+            pass
+    with processing_lock(tmp_path, "WEGE3"):
+        with request_lock(tmp_path, "WEGE3"):
+            pass
+
+
+@pytest.mark.parametrize("suffix,lock", [("", processing_lock), (".request", request_lock)])
+def test_morte_do_processo_libera_lock_sem_remover_arquivo(tmp_path, suffix, lock):
+    path = tmp_path / ".locks" / f"WEGE3{suffix}"
     path.parent.mkdir()
     code = "import fcntl,sys; f=open(sys.argv[1],'a'); fcntl.flock(f,fcntl.LOCK_EX); print('pronto',flush=True); sys.stdin.read()"
     process = subprocess.Popen([sys.executable, "-c", code, str(path)],
@@ -35,12 +48,12 @@ def test_morte_do_processo_libera_lock_sem_remover_arquivo(tmp_path):
     try:
         assert process.stdout.readline().strip() == "pronto"
         with pytest.raises(TickerBusy):
-            with processing_lock(tmp_path, "WEGE3"):
+            with lock(tmp_path, "WEGE3"):
                 pytest.fail("Processo concorrente ignorado")
     finally:
         process.kill()
         process.communicate(timeout=5)
-    with processing_lock(tmp_path, "WEGE3"):
+    with lock(tmp_path, "WEGE3"):
         assert path.exists()
 
 

@@ -33,13 +33,14 @@ def main(argv=None):
     if args.operation == "gerar":
         # Consulta permanece independente dos modulos do gerador e do .env.
         sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
-        from b3_report.queue_control import TickerBusy, enqueue_request, processing_lock
+        from b3_report.queue_control import TickerBusy, enqueue_request, processing_lock, request_lock
 
         try:
-            with processing_lock(args.diretorio_fila, args.symbol):
-                created = enqueue_request(args.diretorio_fila, args.symbol)
+            with request_lock(args.diretorio_fila, args.symbol, wait=True):
+                with processing_lock(args.diretorio_fila, args.symbol):
+                    created = enqueue_request(args.diretorio_fila, args.symbol)
         except TickerBusy:
-            print(f"{args.symbol} ja esta em processamento ou em registro de solicitacao; "
+            print(f"{args.symbol} ja esta em processamento; "
                   "nenhuma nova solicitacao criada.")
             return 0
         except (OSError, ValueError) as exc:

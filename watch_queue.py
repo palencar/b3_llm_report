@@ -1,6 +1,7 @@
 """Watch queue: monitora queue_dir e gera relatórios LLM por ticker."""
 import logging
 import argparse
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -20,7 +21,7 @@ from b3_report.llm import validate_llm_config
 from b3_report.aligned_pipeline import aligned_job_path, run_aligned, should_run_aligned
 from b3_report.textual_baseline import format_report_markdown
 from b3_report.events import active_event, event_token, load_event_context
-from b3_report.queue_control import TickerBusy, processing_lock, read_request, request_path
+from b3_report.queue_control import TickerBusy, processing_lock, read_request, request_lock, request_path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -81,20 +82,18 @@ def _process_queue(config, *, structured_output=False) -> None:
             continue
 
         try:
-            with processing_lock(config.queue_dir, ticker):
-                if _process_entry(config, ticker, name, filepath, structured_output):
-                    return
+            if _process_entry(config, ticker, name, filepath, structured_output):
+                return
         except TickerBusy:
-            _logger.debug("Ativo em processamento ou registro de solicitacao; ignorado: %s", ticker)
+            _logger.debug("Controle ou geracao ocupados; ativo ignorado nesta varredura: %s", ticker)
         except (OSError, ValueError) as exc:
             _logger.error("Controle de fila invalido ticker=%s; item preservado. Detalhe: %s", ticker, exc)
 
 
-def _process_entry(config, ticker, name, filepath, structured_output):
-    global _NEXT_ATTEMPT_AT, _LAST_ATTEMPTED_ENTRY
+def _prepare_entry(config, ticker, filepath, structured_output):
     request = read_request(config.queue_dir, ticker)
     if not os.path.isfile(filepath) and request is None:
-        return False
+        return None
     queue_mtime = os.path.getmtime(filepath) if os.path.isfile(filepath) else request["requested_at"]
     manual = {"request_id": request["id"]} if request else {}
     structured = {"structured_output": True} if structured_output else {}
@@ -103,39 +102,54 @@ def _process_entry(config, ticker, name, filepath, structured_output):
         context = load_event_context(config, ticker)
         event_refresh = active_event(context) or _calendar_changed(config, ticker, context)
         if not request and not event_refresh and _is_stale_queue_trigger(filepath, queue_mtime, config.queue_max_trigger_age_hours):
-            return False
+            return None
         generate, reason = should_run_aligned(config, ticker, queue_mtime, **structured, **manual)
     except (ValueError, FileNotFoundError) as exc:
         _logger.error("Estado do relatorio invalido ticker=%s; item preservado e demais itens "
                       "seguem. Detalhe: %s", ticker, exc)
         _SKIPPED_TRIGGERS[filepath] = (queue_mtime, "controle invalido")
-        return False
+        return None
     if not generate:
         if request and reason == "solicitacao manual ja concluida":
             request_path(config.queue_dir, ticker).unlink()
         _log_skip_once(filepath, ticker, queue_mtime, reason)
-        return False
-    _LAST_ATTEMPTED_ENTRY = name
-    failed = False
-    try:
-        outcome = run_aligned(ticker, config=config, trigger_mtime=queue_mtime,
-                              reports_dir=REPORTS_DIR, **structured, **manual)
-        if "unified" in outcome["results"]:
-            print(format_report_markdown(outcome["results"]["unified"]), flush=True)
-        failed = bool(outcome["failed_modes"])
-        if request and not failed:
-            request_path(config.queue_dir, ticker).unlink()
-    except Exception:
-        failed = True
-        _logger.exception("Falha no relatorio unificado ticker=%s; controle preservado.", ticker)
-    delay = config.queue_request_interval_seconds
-    if failed:
-        delay = max(delay, config.queue_error_cooldown_seconds)
-        _logger.error("Erro ao processar ticker=%s; fila pausada por %ds. Item preservado.", ticker, delay)
-    _NEXT_ATTEMPT_AT = time.monotonic() + delay
-    _IGNORED_STALE_TRIGGERS.pop(filepath, None)
-    _SKIPPED_TRIGGERS.pop(filepath, None)
-    return True
+        return None
+    return queue_mtime, request
+
+
+def _process_entry(config, ticker, name, filepath, structured_output):
+    global _NEXT_ATTEMPT_AT, _LAST_ATTEMPTED_ENTRY
+    with ExitStack() as generation:
+        with request_lock(config.queue_dir, ticker):
+            prepared = _prepare_entry(config, ticker, filepath, structured_output)
+            if prepared is None:
+                return False
+            # Reserva a geracao antes de liberar o controle curto do pedido.
+            generation.enter_context(processing_lock(config.queue_dir, ticker))
+        queue_mtime, request = prepared
+        manual = {"request_id": request["id"]} if request else {}
+        structured = {"structured_output": True} if structured_output else {}
+        _LAST_ATTEMPTED_ENTRY = name
+        failed = False
+        try:
+            outcome = run_aligned(ticker, config=config, trigger_mtime=queue_mtime,
+                                  reports_dir=REPORTS_DIR, **structured, **manual)
+            if "unified" in outcome["results"]:
+                print(format_report_markdown(outcome["results"]["unified"]), flush=True)
+            failed = bool(outcome["failed_modes"])
+            if request and not failed:
+                request_path(config.queue_dir, ticker).unlink()
+        except Exception:
+            failed = True
+            _logger.exception("Falha no relatorio unificado ticker=%s; controle preservado.", ticker)
+        delay = config.queue_request_interval_seconds
+        if failed:
+            delay = max(delay, config.queue_error_cooldown_seconds)
+            _logger.error("Erro ao processar ticker=%s; fila pausada por %ds. Item preservado.", ticker, delay)
+        _NEXT_ATTEMPT_AT = time.monotonic() + delay
+        _IGNORED_STALE_TRIGGERS.pop(filepath, None)
+        _SKIPPED_TRIGGERS.pop(filepath, None)
+        return True
 
 
 def _log_skip_once(filepath: str, ticker: str, queue_mtime: float, reason: str) -> None:

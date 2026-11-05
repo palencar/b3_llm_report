@@ -20,16 +20,25 @@ def request_path(queue_dir, ticker):
     return Path(queue_dir) / ".requests" / f"{ticker}.json"
 
 
-@contextmanager
 def processing_lock(queue_dir, ticker):
+    return _ticker_lock(queue_dir, ticker)
+
+
+def request_lock(queue_dir, ticker, *, wait=False):
+    """Controle curto: nao deve abranger coleta de dados ou chamada ao modelo."""
+    return _ticker_lock(queue_dir, ticker, request=True, wait=wait)
+
+
+@contextmanager
+def _ticker_lock(queue_dir, ticker, *, request=False, wait=False):
     """Nao remover o arquivo: todos os processos devem bloquear o mesmo inode."""
     if re.fullmatch(r"[A-Z0-9]{3,6}", ticker) is None:
         raise ValueError("Simbolo invalido para controle da fila.")
-    path = Path(queue_dir) / ".locks" / ticker
+    path = Path(queue_dir) / ".locks" / (f"{ticker}.request" if request else ticker)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as handle:
         try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(handle, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise TickerBusy(ticker) from exc
         try:
@@ -56,7 +65,7 @@ def read_request(queue_dir, ticker):
 
 
 def enqueue_request(queue_dir, ticker):
-    """Chamador deve deter processing_lock durante leitura e gravacao."""
+    """Chamador deve deter request_lock e verificar que nao ha geracao ativa."""
     existing = read_request(queue_dir, ticker)
     if existing is not None:
         return False

@@ -4,7 +4,7 @@ import json
 import logging
 import os
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -198,10 +198,13 @@ def test_pedido_ja_concluido_remove_marcador_sem_nova_chamada(config):
 
 
 def test_watcher_bloqueia_ativo_durante_execucao(config):
-    from b3_report.queue_control import TickerBusy, processing_lock
+    from b3_report.queue_control import TickerBusy, processing_lock, request_lock
 
     trigger(config, "WEGE3")
     def execute(*args, **kwargs):
+        # A coleta/inferencia nao mantem o controle curto do registro.
+        with request_lock(config.queue_dir, "WEGE3"):
+            pass
         with pytest.raises(TickerBusy):
             with processing_lock(config.queue_dir, "WEGE3"):
                 pytest.fail("Ativo nao protegido durante processamento")
@@ -209,6 +212,57 @@ def test_watcher_bloqueia_ativo_durante_execucao(config):
     watcher.run_aligned.side_effect = execute
     watcher._process_queue(config)
     assert watcher.run_aligned.call_count == 1
+
+
+def test_pedido_durante_verificacao_ignorada_nao_e_perdido(config, monkeypatch, capsys):
+    from concurrent.futures import ThreadPoolExecutor
+    from pathlib import Path
+    import runpy
+    from threading import Event
+    from b3_report.queue_control import read_request, request_lock
+
+    cli = runpy.run_path(str(Path(__file__).resolve().parents[1] / "relatorio"))["main"]
+    trigger(config, "WEGE3")
+    waiting = Event()
+    submitted = []
+    def observe_lock(*args, **kwargs):
+        waiting.set()
+        return request_lock(*args, **kwargs)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        def eligibility(*args, **kwargs):
+            submitted.append(executor.submit(cli, ["gerar", "WEGE3", "--diretorio-fila", config.queue_dir]))
+            assert waiting.wait(timeout=5)
+            return False, "relatorio unificado muito recente"
+        monkeypatch.setattr(watcher.should_run_aligned, "side_effect", eligibility)
+        with patch("b3_report.queue_control.request_lock", side_effect=observe_lock):
+            watcher._process_queue(config)
+            assert submitted[0].result(timeout=5) == 0
+    watcher.run_aligned.assert_not_called()
+    request = read_request(config.queue_dir, "WEGE3")
+    assert request is not None
+    assert "Solicitacao registrada" in capsys.readouterr().out
+    watcher.should_run_aligned.side_effect = None
+    watcher.should_run_aligned.return_value = (True, "atualizacao obrigatoria solicitada")
+    watcher._process_queue(config)
+    assert watcher.run_aligned.call_args.kwargs["request_id"] == request["id"]
+    assert read_request(config.queue_dir, "WEGE3") is None
+
+
+def test_cli_nao_agenda_segunda_geracao_quando_ativo_em_processamento(config, capsys):
+    from pathlib import Path
+    import runpy
+    from b3_report.queue_control import read_request
+
+    cli = runpy.run_path(str(Path(__file__).resolve().parents[1] / "relatorio"))["main"]
+    trigger(config, "WEGE3")
+    def execute(*args, **kwargs):
+        assert cli(["gerar", "WEGE3", "--diretorio-fila", config.queue_dir]) == 0
+        assert read_request(config.queue_dir, "WEGE3") is None
+        return {"results": {}, "failed_modes": []}
+    watcher.run_aligned.side_effect = execute
+    watcher._process_queue(config)
+    assert watcher.run_aligned.call_count == 1
+    assert "WEGE3 ja esta em processamento" in capsys.readouterr().out
 
 
 def test_ativo_ocupado_nao_impede_proximo(config):

@@ -138,6 +138,48 @@ def test_gerar_com_ativo_bloqueado_nao_enfileira(cli, tmp_path, capsys):
     assert "nenhuma nova solicitacao criada" in capsys.readouterr().out
 
 
+def test_gerar_aguarda_controle_curto_e_persiste_pedido(cli, tmp_path, capsys):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from b3_report.queue_control import read_request, request_lock
+
+    waiting = Event()
+    def observe_lock(*args, **kwargs):
+        waiting.set()
+        return request_lock(*args, **kwargs)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with request_lock(tmp_path, "WEGE3"), \
+             patch("b3_report.queue_control.request_lock", side_effect=observe_lock):
+            future = executor.submit(cli, ["gerar", "WEGE3", "--diretorio-fila", str(tmp_path)])
+            assert waiting.wait(timeout=5)
+            assert not future.done()
+            assert read_request(tmp_path, "WEGE3") is None
+        assert future.result(timeout=5) == 0
+    assert read_request(tmp_path, "WEGE3") is not None
+    captured = capsys.readouterr()
+    assert "Solicitacao registrada" in captured.out
+    assert "ja esta em processamento" not in captured.out
+
+
+def test_registros_concorrentes_sao_agrupados(cli, tmp_path, capsys):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from b3_report.queue_control import read_request
+
+    barrier = Barrier(2)
+    def submit():
+        barrier.wait(timeout=5)
+        return cli(["gerar", "WEGE3", "--diretorio-fila", str(tmp_path)])
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(submit) for _ in range(2)]
+        assert [future.result(timeout=5) for future in futures] == [0, 0]
+    assert read_request(tmp_path, "WEGE3") is not None
+    captured = capsys.readouterr()
+    assert captured.out.count("Solicitacao registrada") == 1
+    assert captured.out.count("Solicitacao ja registrada") == 1
+    assert "em processamento" not in captured.out
+
+
 def test_gerar_solicitacao_corrompida_nao_substitui(cli, tmp_path, capsys):
     from b3_report.queue_control import request_path
 
