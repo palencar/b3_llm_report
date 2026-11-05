@@ -226,12 +226,10 @@ def test_watcher_percebe_mudanca_de_fase_do_cache_sem_chamada_de_rede(tmp_path):
     config = SimpleNamespace(raw_dir=str(tmp_path), report_min_age_hours=24, llm_model="modelo",
                              ollama_url_base="http://simulado", openai_url_base="")
     before = context(tmp_path)
-    state_path = watch_queue.queue_state_path(config, "WEGE3")
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps({"event_state": event_token(before)}))
     after = load_event_context(config, "WEGE3", as_of=datetime.fromisoformat("2026-10-21T20:00:00Z"))
-    with patch("watch_queue.load_event_context", return_value=after):
+    with patch("watch_queue.load_report_state", return_value={"event_state": event_token(before)}) as reader:
         assert watch_queue._calendar_changed(config, "WEGE3", after)
+    reader.assert_called_once_with(config, "WEGE3")
 
 
 def test_formatador_legado_consumidor_recebe_mesmo_json_uma_vez():

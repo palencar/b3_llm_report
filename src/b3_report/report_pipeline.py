@@ -109,11 +109,11 @@ def _read_legacy_state(job, path):
     configuration.pop("decision_endpoint", None)
     configuration["version"] = job["version"] = VERSION
     job["identity"] = _digest(configuration)
-    _logger.info("Estado antigo ticker=%s lido no formato atual, sem regravar arquivo.", job["ticker"])
+    _logger.debug("Estado antigo ticker=%s lido no formato atual, sem regravar arquivo.", job["ticker"])
 
 
-def _load_job(config, ticker, structured_output=False, *, scope="queue",
-              preserve_completed=False):
+def load_report_state(config, ticker, *, scope="queue"):
+    """Le e valida o estado preservado, sem regravar nem escolher nova configuracao."""
     path = _state_path(config, ticker, scope)
     if path.is_symlink():
         raise ValueError(f"Arquivo de estado nao pode ser link simbolico: {path}")
@@ -153,6 +153,16 @@ def _load_job(config, ticker, structured_output=False, *, scope="queue",
     expected_transport = "on" if configuration.get("structured_output") == "json-schema-v1" else "off"
     if job.get("structured_output", "off") != expected_transport:
         raise ValueError(f"Transporte diverge da configuracao no estado: {path}")
+    return job
+
+
+def _load_job(config, ticker, structured_output=False, *, scope="queue",
+              preserve_completed=False):
+    job = load_report_state(config, ticker, scope=scope)
+    if job is None:
+        return None
+    configuration = job["configuration"]
+    path = _state_path(config, ticker, scope)
     expected = _configuration(config, structured_output=structured_output)
     if job["identity"] != _digest(expected):
         if job["execution"]["status"] == "pending":

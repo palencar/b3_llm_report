@@ -2,7 +2,6 @@
 import logging
 import argparse
 from contextlib import ExitStack
-import json
 import os
 from pathlib import Path
 import re
@@ -18,7 +17,7 @@ from dotenv import load_dotenv
 
 from b3_core.config import load_config
 from b3_report.llm import validate_llm_config
-from b3_report.report_pipeline import queue_state_path, run_report, should_run_report
+from b3_report.report_pipeline import load_report_state, queue_state_path, run_report, should_run_report
 from b3_report.report_engine import format_report_markdown
 from b3_report.events import active_event, event_token, load_event_context
 from b3_report.queue_control import TickerBusy, processing_lock, read_request, request_lock, request_path
@@ -34,6 +33,7 @@ REPORTS_DIR = "reports"
 _TICKER_RE = re.compile(r"^[A-Z0-9]{3,6}$")
 _IGNORED_STALE_TRIGGERS: dict[str, float] = {}
 _SKIPPED_TRIGGERS: dict[str, tuple[float, str]] = {}
+_CONTROL_ERRORS: dict[str, tuple] = {}
 _NEXT_ATTEMPT_AT = 0.0
 _LAST_ATTEMPTED_ENTRY: str | None = None
 
@@ -41,13 +41,24 @@ _LAST_ATTEMPTED_ENTRY: str | None = None
 def _calendar_changed(config, ticker, context):
     if context is None:
         return False
-    path = queue_state_path(config, ticker)
-    if not path.exists():
-        return False
-    state = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(state, dict):
-        raise ValueError(f"Estado do relatorio invalido: {path}")
-    return event_token(context) != state.get("event_state")
+    state = load_report_state(config, ticker)
+    return state is not None and event_token(context) != state.get("event_state")
+
+
+def _log_control_error_once(config, ticker, filepath, error, *, kind):
+    stamps = []
+    for path in (Path(filepath), request_path(config.queue_dir, ticker), queue_state_path(config, ticker)):
+        try:
+            stat = path.stat()
+            stamps.append((stat.st_ino, stat.st_mtime_ns, stat.st_size))
+        except OSError:
+            stamps.append(None)
+    key = (kind, str(error), tuple(stamps))
+    if _CONTROL_ERRORS.get(filepath) == key:
+        return
+    _logger.error("%s invalido ticker=%s; item preservado e demais itens seguem. Detalhe: %s",
+                  kind, ticker, error)
+    _CONTROL_ERRORS[filepath] = key
 
 
 def _process_queue(config, *, structured_output=False) -> None:
@@ -87,7 +98,7 @@ def _process_queue(config, *, structured_output=False) -> None:
         except TickerBusy:
             _logger.debug("Controle ou geracao ocupados; ativo ignorado nesta varredura: %s", ticker)
         except (OSError, ValueError) as exc:
-            _logger.error("Controle de fila invalido ticker=%s; item preservado. Detalhe: %s", ticker, exc)
+            _log_control_error_once(config, ticker, filepath, exc, kind="Controle de fila")
 
 
 def _prepare_entry(config, ticker, filepath, structured_output):
@@ -102,13 +113,13 @@ def _prepare_entry(config, ticker, filepath, structured_output):
         context = load_event_context(config, ticker)
         event_refresh = active_event(context) or _calendar_changed(config, ticker, context)
         if not request and not event_refresh and _is_stale_queue_trigger(filepath, queue_mtime, config.queue_max_trigger_age_hours):
+            _CONTROL_ERRORS.pop(filepath, None)
             return None
         generate, reason = should_run_report(config, ticker, queue_mtime, **structured, **manual)
     except (ValueError, FileNotFoundError) as exc:
-        _logger.error("Estado do relatorio invalido ticker=%s; item preservado e demais itens "
-                      "seguem. Detalhe: %s", ticker, exc)
-        _SKIPPED_TRIGGERS[filepath] = (queue_mtime, "controle invalido")
+        _log_control_error_once(config, ticker, filepath, exc, kind="Estado do relatorio")
         return None
+    _CONTROL_ERRORS.pop(filepath, None)
     if not generate:
         if request and reason == "solicitacao manual ja concluida":
             request_path(config.queue_dir, ticker).unlink()

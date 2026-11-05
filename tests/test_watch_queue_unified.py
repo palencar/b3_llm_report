@@ -15,6 +15,7 @@ def config(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher, "REPORTS_DIR", str(tmp_path / "reports"))
     monkeypatch.setattr(watcher, "_NEXT_ATTEMPT_AT", 0)
     monkeypatch.setattr(watcher, "_LAST_ATTEMPTED_ENTRY", None)
+    monkeypatch.setattr(watcher, "_CONTROL_ERRORS", {})
     monkeypatch.setattr(watcher, "load_event_context", Mock(return_value=None))
     monkeypatch.setattr(watcher, "load_dotenv", Mock())
     return SimpleNamespace(queue_dir=str(queue), raw_dir=str(tmp_path / "raw"),

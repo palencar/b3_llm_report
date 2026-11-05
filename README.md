@@ -147,6 +147,8 @@ Esses caminhos sao internos ao container. Definir `DB_PATH` ou `RAW_DIR` nao mon
 
 O relatorio e publicado em `reports/<ATIVO>.md`, com frontmatter. Os arquivos `data/raw/assessments/<ATIVO>.queue.json` e `.manual.json` guardam o estado de execucao e os snapshots necessarios a retomada; `data/raw/event-observations/` guarda as observacoes de eventos do Yahoo. Sao dados persistentes internos, nao temporarios descartaveis. O banco tambem pode receber escritas do cache Fundamentus durante a geracao. Para integrar outro sistema, compartilhe somente fila e relatorios quando suficiente, mantendo banco e estados sob controle do gerador e um unico watcher escritor.
 
+Arquivos `.<nome>.<identificador>.tmp` sao usados durante a escrita atomica e removidos tambem em falhas de escrita, flush ou sincronizacao, quando a limpeza pode ser executada. Encerramento abrupto do processo ainda pode deixar sobras; nao ha varredura automatica que apague temporarios de processos possivelmente ativos.
+
 O watcher nao oferece servidor HTTP nem exige publicar portas (`-p`). Ele precisa de acesso de saida as fontes de dados e a API do modelo. Compartilhar arquivos entre containers no mesmo host nao elimina essas conexoes de saida.
 
 Inicialize o banco explicitamente:
@@ -181,6 +183,8 @@ Os exemplos usam o UID/GID do usuario do host para permitir escrita nos diretori
 Solicite um relatorio com `touch queue/PETR4`. A fila considera a idade do trigger e do relatorio existente; ajuste `QUEUE_MAX_TRIGGER_AGE_HOURS` e `REPORT_MIN_AGE_HOURS` no `.env` conforme a operacao.
 
 A fila faz no maximo uma tentativa de relatorio por varredura e espera `QUEUE_REQUEST_INTERVAL_SECONDS` (padrao: 60 segundos) apos cada sucesso. Depois de qualquer erro, pausa todas as tentativas por `QUEUE_ERROR_COOLDOWN_SECONDS` (padrao: 900 segundos), respeitando tambem o intervalo minimo. O proximo item segue a ordem alfabetica circular, permitindo avancar mesmo se um ticker falhar. As pausas contam a partir do fim da tentativa e sao verificadas a cada `QUEUE_POLL_SECONDS`. Os controles ficam em memoria; recriar ou reiniciar o processo zera a pausa. Esses intervalos reduzem rajadas, mas nao garantem que o Yahoo libere um IP ja limitado. Uma tentativa de relatorio pode fazer varias consultas Yahoo.
+
+Erros de controle encontrados antes de iniciar a geracao preservam o item e permitem verificar os demais. O watcher continua verificando a pendencia em cada varredura, mas repete seu log apenas se mudar o motivo ou o arquivo do alerta, pedido ou estado; uma verificacao bem-sucedida libera novo registro se o erro voltar. Esse controle fica em memoria e reinicia com o processo. A adaptacao normal de estados antigos e registrada somente em DEBUG.
 
 No modo unificado descrito abaixo, a unidade da varredura e um ticker. As etapas elegiveis sao sequenciais; o intervalo/cooldown comeca depois da tentativa.
 

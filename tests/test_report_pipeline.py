@@ -611,3 +611,46 @@ def test_diagnostico_de_campos_adicionais_nao_expoe_conteudo(config, tmp_path):
         pipeline.should_run_report(config, "WEGE3", 100)
     assert "campo-com-segredo" not in str(error.value)
     assert "valor-sigiloso" not in str(error.value)
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("scope", ["queue", "manual"])
+def test_leitor_compartilhado_valida_sem_regravar_ou_aplicar_configuracao_nova(
+        config, tmp_path, legacy, scope):
+    args = {"trigger_mtime": 100} if scope == "queue" else {}
+    first = run(config, tmp_path, **args)
+    path = Path(first["manifest_path"])
+    state = json.loads(path.read_text())
+    if legacy:
+        state = legacy_state(state, config)
+        path.write_text(json.dumps(state))
+    original = path.read_bytes()
+    old_model = config.llm_model
+    config.llm_model = "outro-modelo"
+    loaded = pipeline.load_report_state(config, "WEGE3", scope=scope)
+    assert loaded["version"] == pipeline.VERSION
+    assert loaded["configuration"]["report_model"] == old_model
+    assert loaded["execution"]["status"] == "done"
+    assert path.read_bytes() == original
+    pipeline.collect_snapshot.assert_called_once()
+
+
+@pytest.mark.parametrize("damage", ["configuracao", "snapshot", "resultado"])
+def test_watcher_valida_estado_antes_de_comparar_evento(config, tmp_path, monkeypatch, damage):
+    import watch_queue as watcher
+    first = run(config, tmp_path, trigger_mtime=100)
+    path = Path(first["manifest_path"])
+    state = json.loads(path.read_text())
+    state["event_state"] = "anterior"
+    if damage == "configuracao":
+        state["identity"] = "corrompida"
+    elif damage == "snapshot":
+        state["dataset_id"] = "corrompido"
+    else:
+        state["execution"]["result_hash"] = "corrompido"
+    path.write_text(json.dumps(state))
+    original = path.read_bytes()
+    monkeypatch.setattr(watcher, "event_token", lambda context: "atual")
+    with pytest.raises(ValueError):
+        watcher._calendar_changed(config, "WEGE3", {"token": "atual"})
+    assert path.read_bytes() == original

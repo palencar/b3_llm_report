@@ -20,6 +20,7 @@ def config(tmp_path, monkeypatch):
     monkeypatch.setattr(watcher, "_LAST_ATTEMPTED_ENTRY", None)
     monkeypatch.setattr(watcher, "_IGNORED_STALE_TRIGGERS", {})
     monkeypatch.setattr(watcher, "_SKIPPED_TRIGGERS", {})
+    monkeypatch.setattr(watcher, "_CONTROL_ERRORS", {})
     monkeypatch.setattr(watcher, "load_event_context", Mock(return_value=None))
     monkeypatch.setattr(watcher, "should_run_report", Mock(return_value=(True, "simulado")))
     monkeypatch.setattr(watcher, "run_report", Mock(return_value={"results": {}, "failed_modes": []}))
@@ -137,12 +138,77 @@ def test_estado_corrompido_nao_impede_demais_itens(config, monkeypatch, caplog):
 
 
 def test_detecta_mudanca_de_evento_no_estado_unico(config, monkeypatch):
-    path = watcher.queue_state_path(config, "WEGE3")
-    path.parent.mkdir(parents=True)
-    path.write_text(json.dumps({"event_state": "anterior"}), encoding="utf-8")
+    reader = Mock(return_value={"event_state": "anterior"})
+    monkeypatch.setattr(watcher, "load_report_state", reader)
     monkeypatch.setattr(watcher, "event_token", lambda context: context["token"])
     assert watcher._calendar_changed(config, "WEGE3", {"token": "atual"})
     assert not watcher._calendar_changed(config, "WEGE3", {"token": "anterior"})
+    assert reader.call_count == 2
+    reader.assert_called_with(config, "WEGE3")
+
+
+def test_controle_invalido_loga_uma_vez_mas_verifica_em_toda_varredura(config, caplog):
+    path = trigger(config, "WEGE3")
+    watcher.should_run_report.side_effect = ValueError("Pendencia incompativel")
+    with caplog.at_level(logging.ERROR):
+        watcher._process_queue(config)
+        watcher._process_queue(config)
+        watcher._process_queue(config)
+    assert watcher.should_run_report.call_count == 3
+    assert caplog.text.count("Pendencia incompativel") == 1
+    watcher.run_report.assert_not_called()
+    assert path.exists()
+
+
+@pytest.mark.parametrize("changed", ["alerta", "estado", "pedido", "motivo"])
+def test_erro_de_controle_volta_ao_log_quando_muda(config, caplog, changed):
+    path = trigger(config, "WEGE3")
+    watcher.should_run_report.side_effect = ValueError("Pendencia incompativel")
+    with caplog.at_level(logging.ERROR):
+        watcher._process_queue(config)
+        watcher._process_queue(config)
+        if changed == "alerta":
+            os.utime(path, (1000001, 1000001))
+        elif changed == "estado":
+            state = watcher.queue_state_path(config, "WEGE3")
+            state.parent.mkdir(parents=True)
+            state.write_text("{}")
+        elif changed == "pedido":
+            manual_request(config, "WEGE3")
+        else:
+            watcher.should_run_report.side_effect = ValueError("Outra pendencia")
+        watcher._process_queue(config)
+    errors = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(errors) == 2
+    watcher.run_report.assert_not_called()
+
+
+def test_erro_de_controle_volta_ao_log_apos_recuperacao(config, caplog):
+    trigger(config, "WEGE3")
+    watcher.should_run_report.side_effect = ValueError("Pendencia incompativel")
+    with caplog.at_level(logging.ERROR):
+        watcher._process_queue(config)
+        watcher.should_run_report.side_effect = None
+        watcher.should_run_report.return_value = (False, "relatorio unificado ja concluido")
+        watcher._process_queue(config)
+        watcher.should_run_report.side_effect = ValueError("Pendencia incompativel")
+        watcher._process_queue(config)
+    assert caplog.text.count("Pendencia incompativel") == 2
+
+
+def test_pedido_invalido_nao_repete_log_e_pode_ser_corrigido(config, caplog):
+    from b3_report.queue_control import request_path
+    trigger(config, "WEGE3")
+    path = request_path(config.queue_dir, "WEGE3")
+    path.parent.mkdir()
+    path.write_text("{}")
+    with caplog.at_level(logging.ERROR):
+        watcher._process_queue(config)
+        watcher._process_queue(config)
+    assert caplog.text.count("Solicitacao manual invalida") == 1
+    path.unlink()
+    watcher._process_queue(config)
+    watcher.run_report.assert_called_once()
 
 
 def manual_request(config, ticker):

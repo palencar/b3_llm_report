@@ -19,10 +19,10 @@ def write_report_file_atomic(target_path: Path | str, content: str) -> Path:
             suffix=".tmp",
             delete=False,
         ) as temp_file:
+            temp_path = Path(temp_file.name)
             temp_file.write(content)
             temp_file.flush()
             os.fsync(temp_file.fileno())
-            temp_path = Path(temp_file.name)
         os.replace(temp_path, target)
         temp_path = None
         return target
