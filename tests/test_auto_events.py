@@ -170,9 +170,9 @@ def test_conhecimento_futuro_nao_e_injetado(tmp_path):
 
 def test_replay_de_snapshot_nao_le_cache_atual(tmp_path):
     from b3_report.unified import classify_unified_snapshot
-    from b3_report.decision_snapshot import build_decision_snapshot
+    from b3_report.snapshot import build_snapshot
     # Snapshot historico sem calendario continua sem calendario no replay.
-    snapshot = build_decision_snapshot(ticker="WEGE3", analysis_date="2026-10-13", yfinance_data={},
+    snapshot = build_snapshot(ticker="WEGE3", analysis_date="2026-10-13", yfinance_data={},
                                        fundamentus_text="", cvm_rows=[])
     before = deepcopy(snapshot)
     context(tmp_path)
@@ -206,7 +206,7 @@ def test_recoleta_igual_nao_invalida_fila_apenas_pelo_horario(tmp_path):
 
 
 def test_coleta_do_snapshot_normaliza_e_preserva_metadados_sem_calendario(tmp_path):
-    from b3_report.decision_snapshot import collect_decision_snapshot
+    from b3_report.snapshot import collect_snapshot
     config = SimpleNamespace(raw_dir=str(tmp_path), db_path="simulado", fund_ttl=1)
     payload = data()
     fixed = datetime.fromisoformat("2026-10-21T19:01:00Z")
@@ -215,7 +215,7 @@ def test_coleta_do_snapshot_normaliza_e_preserva_metadados_sem_calendario(tmp_pa
          patch("b3_report.sources.cvm.fetch_raw_rows", return_value=[]), \
          patch("b3_report.events.datetime", wraps=datetime) as clock:
         clock.now.return_value = fixed
-        snapshot = collect_decision_snapshot("WEGE3", config, "2026-10-21")
+        snapshot = collect_snapshot("WEGE3", config, "2026-10-21")
     assert snapshot["event_context"]["events"][0]["event_time"] == "17:00"
     assert snapshot["source_data"]["yfinance"] == payload
     assert snapshot["risk_evidence"] == {}
@@ -226,7 +226,7 @@ def test_watcher_percebe_mudanca_de_fase_do_cache_sem_chamada_de_rede(tmp_path):
     config = SimpleNamespace(raw_dir=str(tmp_path), report_min_age_hours=24, llm_model="modelo",
                              ollama_url_base="http://simulado", openai_url_base="")
     before = context(tmp_path)
-    state_path = watch_queue.aligned_job_path(config, "WEGE3")
+    state_path = watch_queue.queue_state_path(config, "WEGE3")
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps({"event_state": event_token(before)}))
     after = load_event_context(config, "WEGE3", as_of=datetime.fromisoformat("2026-10-21T20:00:00Z"))

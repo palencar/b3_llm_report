@@ -319,6 +319,8 @@ O frontmatter e uma apresentacao, nao substitui o estado de retomada. Regra de N
 
 O motor textual tem somente o contrato de resposta `relatorio` do unificado; nao oferece mais um prompt ou parser paralelo `baseline/rationale`. A leitura de `rationale` permanece apenas para apresentar resultados antigos, sem converte-los ou regrava-los. Identificadores tecnicos antigos nos estados foram preservados; essa limpeza nao muda o prompt ou a identidade de execucao.
 
+Os modulos internos principais sao `snapshot.py` (coleta e validacao dos dados), `report_engine.py` (motor textual e apresentacao) e `report_pipeline.py` (execucao, persistencia e retomada). Seus nomes nao alteram os caminhos de dados, os formatos persistidos nem a interface dos comandos.
+
 #### Risco qualitativo (experimental)
 
 A rubrica `rubrica-comum-v2-risco-qualitativo-experimental` vale para o relatorio unificado. Investimento mantem os criterios anteriores; risco usa as classes abaixo, sem faixas de perda:

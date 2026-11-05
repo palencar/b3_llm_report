@@ -27,9 +27,9 @@ def config(tmp_path, monkeypatch):
 @pytest.mark.parametrize("failed,delay", [([], 60), (["unified"], 900)])
 def test_unificado_preserva_pacing_e_imprime_uma_vez(config, monkeypatch, capsys, failed, delay):
     monkeypatch.setattr(watcher.time, "monotonic", lambda: 100)
-    monkeypatch.setattr(watcher, "should_run_aligned", Mock(return_value=(True, "simulado")))
+    monkeypatch.setattr(watcher, "should_run_report", Mock(return_value=(True, "simulado")))
     run = Mock(return_value={"results": {"unified": {}}, "failed_modes": failed})
-    monkeypatch.setattr(watcher, "run_aligned", run)
+    monkeypatch.setattr(watcher, "run_report", run)
     monkeypatch.setattr(watcher, "format_report_markdown", lambda result: "Relatorio unico.")
     watcher._process_queue(config, structured_output=True)
     watcher._process_queue(config)
@@ -40,9 +40,9 @@ def test_unificado_preserva_pacing_e_imprime_uma_vez(config, monkeypatch, capsys
 
 
 def test_controle_invalido_preserva_item_sem_chamar_modelo(config, monkeypatch, caplog):
-    monkeypatch.setattr(watcher, "should_run_aligned", Mock(side_effect=ValueError("Controle invalido")))
+    monkeypatch.setattr(watcher, "should_run_report", Mock(side_effect=ValueError("Controle invalido")))
     run = Mock(side_effect=AssertionError("Nao executar."))
-    monkeypatch.setattr(watcher, "run_aligned", run)
+    monkeypatch.setattr(watcher, "run_report", run)
     watcher._process_queue(config)
     run.assert_not_called()
     assert "item preservado" in caplog.text

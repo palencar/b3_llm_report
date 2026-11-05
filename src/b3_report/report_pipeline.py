@@ -14,11 +14,11 @@ from dotenv import load_dotenv
 
 from b3_core.config import load_config
 from b3_report.assessment import validate_assessment_result
-from b3_report.decision_snapshot import NORMALIZATION_POLICY, collect_decision_snapshot, load_decision_snapshot, snapshot_id, validate_snapshot
+from b3_report.snapshot import NORMALIZATION_POLICY, collect_snapshot, load_snapshot, snapshot_id, validate_snapshot
 from b3_report.llm import get_investment_analysis, validate_llm_config
 from b3_report.reports import write_report_file_atomic
 from b3_report.rubric import RUBRIC_VERSION, INSTRUCTIONS_VERSION
-from b3_report.textual_baseline import BASELINE_FORMAT_VERSION, format_report_markdown
+from b3_report.report_engine import TEXT_FORMAT_VERSION, format_report_markdown
 from b3_report.unified import UNIFIED_FORMAT_VERSION, classify_unified_snapshot
 from b3_report.model_state import MODEL_STATE_VERSION
 from b3_report.events import AUTO_EVENT_POLICY_VERSION, event_token, load_event_context
@@ -40,7 +40,7 @@ def _configuration(config, *, structured_output=False):
                "normalization_policy": NORMALIZATION_POLICY,
                "model_state_version": MODEL_STATE_VERSION,
                "event_policy": AUTO_EVENT_POLICY_VERSION,
-               "text_format": BASELINE_FORMAT_VERSION}
+               "text_format": TEXT_FORMAT_VERSION}
     payload["unified_format"] = UNIFIED_FORMAT_VERSION
     if structured_output:
         payload["structured_output"] = "json-schema-v1"
@@ -51,7 +51,7 @@ def _identity(config, *, structured_output=False):
     return _digest(_configuration(config, structured_output=structured_output))
 
 
-def aligned_job_path(config, ticker):
+def queue_state_path(config, ticker):
     return _state_path(config, ticker, "queue")
 
 
@@ -165,7 +165,7 @@ def _load_job(config, ticker, structured_output=False, *, scope="queue",
     return job
 
 
-def should_run_aligned(config, ticker, trigger_mtime, structured_output=False, *, request_id=None):
+def should_run_report(config, ticker, trigger_mtime, structured_output=False, *, request_id=None):
     job = _load_job(config, ticker,
                     structured_output=structured_output, preserve_completed=True)
     if job is None:
@@ -197,7 +197,7 @@ def _validate_identity(result, snapshot, model):
 
 
 @token_usage_session()
-def run_aligned(symbol, *, snapshot_path=None, config=None, trigger_mtime=None,
+def run_report(symbol, *, snapshot_path=None, config=None, trigger_mtime=None,
                 reports_dir="reports", textual_requester=None,
                 structured_output=False, request_id=None):
     if config is None:
@@ -220,7 +220,7 @@ def run_aligned(symbol, *, snapshot_path=None, config=None, trigger_mtime=None,
     pending = current and current["execution"]["status"] == "pending"
     job = current if scope == "queue" or pending else None
     if job and scope == "manual" and snapshot_path:
-        if snapshot_id(load_decision_snapshot(snapshot_path)) != job["dataset_id"]:
+        if snapshot_id(load_snapshot(snapshot_path)) != job["dataset_id"]:
             raise ValueError("Snapshot externo diverge da execucao manual pendente; preserve ou reinicie o estado manual.")
     state_path = _state_path(config, symbol, scope).resolve()
     if job and job["execution"]["status"] == "done":
@@ -233,11 +233,11 @@ def run_aligned(symbol, *, snapshot_path=None, config=None, trigger_mtime=None,
         snapshot = deepcopy(job["snapshot"])
     else:
         if snapshot_path:
-            snapshot = load_decision_snapshot(snapshot_path)
+            snapshot = load_snapshot(snapshot_path)
             if snapshot["ticker"] != symbol:
                 raise ValueError("Ticker solicitado diverge do snapshot preservado.")
         else:
-            snapshot = collect_decision_snapshot(symbol, config, datetime.now(timezone.utc).date().isoformat())
+            snapshot = collect_snapshot(symbol, config, datetime.now(timezone.utc).date().isoformat())
         validate_snapshot(snapshot)
         if snapshot["ticker"] != symbol:
             raise ValueError("Ticker coletado diverge do alerta.")

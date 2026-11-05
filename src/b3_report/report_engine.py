@@ -6,7 +6,7 @@ from b3_report.assessment import (
     HORIZONS, SCHEMA_VERSION, prepare_risk_stage,
     validate_assessment_result,
 )
-from b3_report.decision_snapshot import snapshot_id, validate_snapshot
+from b3_report.snapshot import snapshot_id, validate_snapshot
 from b3_report.frontmatter import format_frontmatter, readable_reason as _readable_reason
 from b3_report.llm import LLMError, LLMResponse, LLMResponseError
 from b3_report.model_state import MODEL_STATE_VERSION
@@ -18,7 +18,7 @@ from b3_report.rubric import (
 )
 
 # Identificador legado da configuracao persistida, nao uma segunda rota de geracao.
-BASELINE_FORMAT_VERSION = "baseline-textual-v4-sem-probabilidades"
+TEXT_FORMAT_VERSION = "baseline-textual-v4-sem-probabilidades"
 REPORT_PRESENTATION_VERSION = "relatorio-markdown-v7-aviso-experimental"
 HORIZON_TITLES = {"curtissimo": "Curtissimo prazo", "curto": "Curto prazo", "medio": "Medio prazo"}
 _STATUS_TITLES = {"dados_insuficientes": "Dados insuficientes", "erro": "Erro",

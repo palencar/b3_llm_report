@@ -8,8 +8,8 @@ SRC_DIR = os.path.join(ROOT_DIR, "src")
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
-from b3_report.aligned_pipeline import run_aligned  # noqa: E402
-from b3_report.textual_baseline import format_report_markdown  # noqa: E402
+from b3_report.report_pipeline import run_report  # noqa: E402
+from b3_report.report_engine import format_report_markdown  # noqa: E402
 
 
 def _parse_args() -> argparse.Namespace:
@@ -30,7 +30,7 @@ def main() -> int:
     symbol = args.symbol.upper()
     structured = {"structured_output": True} if args.structured_output == "on" else {}
     print(f"Processando simbolo: {symbol}")
-    outcome = run_aligned(symbol, snapshot_path=args.snapshot, **structured)
+    outcome = run_report(symbol, snapshot_path=args.snapshot, **structured)
     if "unified" in outcome["results"]:
         print(format_report_markdown(outcome["results"]["unified"]))
     return 1 if outcome["failed_modes"] else 0

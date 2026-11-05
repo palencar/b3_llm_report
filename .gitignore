@@ -12,6 +12,7 @@ reports/
 /b3_storage.db
 /b3_storage.db.wal
 /notes/
+/tasks-md/
 /graphify-out/
 /.opencode/
 PRD*.md

@@ -9,7 +9,7 @@ Relatorio e classificacoes compartilham a mesma resposta, sem classificador dedi
 import json
 
 from b3_report.assessment import validate_classification_result
-from b3_report.textual_baseline import (
+from b3_report.report_engine import (
     classify_textual_snapshot, response_schema, _unique_keys,
 )
 

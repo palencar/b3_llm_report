@@ -18,8 +18,8 @@ from dotenv import load_dotenv
 
 from b3_core.config import load_config
 from b3_report.llm import validate_llm_config
-from b3_report.aligned_pipeline import aligned_job_path, run_aligned, should_run_aligned
-from b3_report.textual_baseline import format_report_markdown
+from b3_report.report_pipeline import queue_state_path, run_report, should_run_report
+from b3_report.report_engine import format_report_markdown
 from b3_report.events import active_event, event_token, load_event_context
 from b3_report.queue_control import TickerBusy, processing_lock, read_request, request_lock, request_path
 
@@ -41,7 +41,7 @@ _LAST_ATTEMPTED_ENTRY: str | None = None
 def _calendar_changed(config, ticker, context):
     if context is None:
         return False
-    path = aligned_job_path(config, ticker)
+    path = queue_state_path(config, ticker)
     if not path.exists():
         return False
     state = json.loads(path.read_text(encoding="utf-8"))
@@ -103,7 +103,7 @@ def _prepare_entry(config, ticker, filepath, structured_output):
         event_refresh = active_event(context) or _calendar_changed(config, ticker, context)
         if not request and not event_refresh and _is_stale_queue_trigger(filepath, queue_mtime, config.queue_max_trigger_age_hours):
             return None
-        generate, reason = should_run_aligned(config, ticker, queue_mtime, **structured, **manual)
+        generate, reason = should_run_report(config, ticker, queue_mtime, **structured, **manual)
     except (ValueError, FileNotFoundError) as exc:
         _logger.error("Estado do relatorio invalido ticker=%s; item preservado e demais itens "
                       "seguem. Detalhe: %s", ticker, exc)
@@ -132,7 +132,7 @@ def _process_entry(config, ticker, name, filepath, structured_output):
         _LAST_ATTEMPTED_ENTRY = name
         failed = False
         try:
-            outcome = run_aligned(ticker, config=config, trigger_mtime=queue_mtime,
+            outcome = run_report(ticker, config=config, trigger_mtime=queue_mtime,
                                   reports_dir=REPORTS_DIR, **structured, **manual)
             if "unified" in outcome["results"]:
                 print(format_report_markdown(outcome["results"]["unified"]), flush=True)

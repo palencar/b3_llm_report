@@ -5,9 +5,9 @@ import pytest
 from b3_report.llm import LLMResponse
 
 from b3_report.assessment import HORIZONS
-from b3_report.decision_snapshot import SNAPSHOT_VERSION, snapshot_id
+from b3_report.snapshot import SNAPSHOT_VERSION, snapshot_id
 from b3_report.rubric import MAX_AGE_DAYS
-from b3_report.textual_baseline import format_report_markdown
+from b3_report.report_engine import format_report_markdown
 from b3_report.unified import (
     UNIFIED_FORMAT_VERSION, build_unified_prompt, classify_unified_snapshot,
     parse_unified_answers,

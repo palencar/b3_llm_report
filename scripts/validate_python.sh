@@ -20,12 +20,12 @@ python -m py_compile \
   src/b3_report/queue_control.py \
   src/b3_report/token_usage.py \
   src/b3_report/assessment.py \
-  src/b3_report/decision_snapshot.py \
+  src/b3_report/snapshot.py \
   src/b3_report/model_state.py \
   src/b3_report/events.py \
-  src/b3_report/aligned_pipeline.py \
+  src/b3_report/report_pipeline.py \
   src/b3_report/rubric.py \
-  src/b3_report/textual_baseline.py \
+  src/b3_report/report_engine.py \
   src/b3_report/unified.py \
   src/b3_report/sources/yfinance.py \
   src/b3_report/sources/fundamentus.py

@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 import duckdb
 import pytest
 
-from b3_report.decision_snapshot import NORMALIZATION_POLICY, build_decision_snapshot, collect_decision_snapshot, snapshot_id
+from b3_report.snapshot import NORMALIZATION_POLICY, build_snapshot, collect_snapshot, snapshot_id
 from b3_report.sources.fundamentus import get_complementary_data, get_complementary_payload
 from b3_report.sources.yfinance import extract_yfinance_info
 from b3_report.rubric import check_data_readiness
@@ -15,7 +15,7 @@ from b3_storage.fundamentus import save_cache, load_cache
 
 
 def build(payload=None, yfinance=None):
-    return build_decision_snapshot(ticker="FIIB11", analysis_date="2026-10-15",
+    return build_snapshot(ticker="FIIB11", analysis_date="2026-10-15",
                                   yfinance_data=yfinance or {}, fundamentus_text="Texto simulado.", cvm_rows=[],
                                   fundamentus_payload=payload)
 
@@ -107,7 +107,7 @@ def test_coleta_preserva_payload_com_uma_unica_consulta_por_fonte():
     with patch("b3_report.sources.yfinance.extract_yfinance_info", return_value="{}") as yf, \
             patch("b3_report.sources.fundamentus.get_complementary_payload", return_value=payload) as fundamentus, \
             patch("b3_report.sources.cvm.fetch_raw_rows", return_value=[]) as cvm:
-        snapshot = collect_decision_snapshot("FIIB11", config, "2026-10-15")
+        snapshot = collect_snapshot("FIIB11", config, "2026-10-15")
     yf.assert_called_once_with("FIIB11.SA")
     fundamentus.assert_called_once_with("FIIB11", db_path=config.db_path, ttl_seconds=86400)
     cvm.assert_called_once_with("FIIB11", config.db_path)

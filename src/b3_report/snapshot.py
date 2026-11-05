@@ -77,7 +77,7 @@ def _values(data: dict, section: str, fields: tuple[str, ...]) -> dict:
     return {field: item[field] for field in fields if item.get(field) is not None}
 
 
-def build_decision_snapshot(*, ticker: str, analysis_date: str, yfinance_data: dict,
+def build_snapshot(*, ticker: str, analysis_date: str, yfinance_data: dict,
                             fundamentus_text: str, cvm_rows: list,
                             fundamentus_payload: dict | None = None) -> dict:
     """Aplica politica unica de fontes e preserva os dados originais no contexto."""
@@ -181,7 +181,7 @@ def snapshot_id(snapshot: dict) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def load_decision_snapshot(path: str | Path) -> dict:
+def load_snapshot(path: str | Path) -> dict:
     """Le snapshot avulso ou extrai o snapshot do estado atual autocontido."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     if isinstance(data, dict) and data.get("version") in ("assessment-state-v1", "assessment-state-v2"):
@@ -198,7 +198,7 @@ def load_decision_snapshot(path: str | Path) -> dict:
 
 
 
-def collect_decision_snapshot(symbol: str, config, analysis_date: str) -> dict:
+def collect_snapshot(symbol: str, config, analysis_date: str) -> dict:
     # Importacoes locais permitem testar replay sem carregar os coletores.
     from b3_report.sources.yfinance import extract_yfinance_info
     from b3_report.sources.fundamentus import get_complementary_payload
@@ -209,7 +209,7 @@ def collect_decision_snapshot(symbol: str, config, analysis_date: str) -> dict:
     rows = fetch_raw_rows(symbol, config.db_path)
     if not rows:
         _logger.warning("Snapshot ticker=%s sem demonstrativos CVM; ausencia preservada.", symbol)
-    snapshot = build_decision_snapshot(ticker=symbol, analysis_date=analysis_date,
+    snapshot = build_snapshot(ticker=symbol, analysis_date=analysis_date,
                                    yfinance_data=yfinance_data, fundamentus_text=fundamentus["text"],
                                    cvm_rows=rows or [], fundamentus_payload=fundamentus)
     context = load_event_context(config, symbol, yfinance_data=yfinance_data)
