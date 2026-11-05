@@ -305,8 +305,11 @@ def test_estado_antigo_pendente_retoma_so_relatorio(config, tmp_path):
     assert pipeline.collect_snapshot.call_count == 1
 
 
-@pytest.mark.parametrize("change", ["model", "instructions", "transport"])
-def test_configuracao_nao_muda_com_pendencia(config, tmp_path, monkeypatch, change):
+@pytest.mark.parametrize("change, field", [
+    ("model", "report_model"), ("instructions", "instructions"),
+    ("transport", "structured_output"), ("endpoint", "report_endpoint"),
+])
+def test_configuracao_nao_muda_com_pendencia(config, tmp_path, monkeypatch, change, field):
     first = run(config, tmp_path, trigger_mtime=100, textual_requester=lambda p: "{}")
     path = Path(first["manifest_path"])
     original = path.read_bytes()
@@ -315,10 +318,15 @@ def test_configuracao_nao_muda_com_pendencia(config, tmp_path, monkeypatch, chan
         config.llm_model = "outro"
     elif change == "instructions":
         monkeypatch.setattr(pipeline, "INSTRUCTIONS_VERSION", "outras")
+    elif change == "endpoint":
+        config.ollama_url_base = "http://usuario:segredo@outro-endpoint"
     else:
         args["structured_output"] = True
-    with pytest.raises(ValueError, match="Configuracao alterada com execucao pendente"):
+    with pytest.raises(ValueError, match="Configuracao alterada com execucao pendente") as error:
         pipeline.should_run_report(config, "WEGE3", 100, **args)
+    assert f"Campos alterados: {field}." in str(error.value)
+    assert "segredo" not in str(error.value)
+    assert "http://" not in str(error.value)
     assert path.read_bytes() == original
 
 
@@ -459,7 +467,147 @@ def test_checkpoint_interrompido_nao_marca_concluido(config, tmp_path, monkeypat
             raise OSError("Checkpoint interrompido")
         return writer(path, content)
     monkeypatch.setattr(pipeline, "write_report_file_atomic", interrupted)
+    requester = Mock(side_effect=sender)
     with pytest.raises(OSError, match="Checkpoint interrompido"):
+        run(config, tmp_path, trigger_mtime=100, textual_requester=requester)
+    state = json.loads(pipeline.queue_state_path(config, "WEGE3").read_text())
+    assert state["execution"]["status"] == "pending"
+    assert "completed_at" not in state
+    assert not pipeline.has_errors(state["execution"]["result"])
+    assert (tmp_path / "reports" / "WEGE3.md").exists()
+    assert requester.call_count == 2
+    monkeypatch.setattr(pipeline, "write_report_file_atomic", writer)
+    second = run(config, tmp_path, trigger_mtime=100, textual_requester=requester)
+    assert not second["failed_modes"]
+    assert requester.call_count == 2
+    saved = json.loads(pipeline.queue_state_path(config, "WEGE3").read_text())
+    assert saved["execution"]["status"] == "done"
+    assert saved["execution"]["result"] == state["execution"]["result"]
+
+
+@pytest.mark.parametrize("manual", [False, True])
+@pytest.mark.parametrize("structured_output", [False, True])
+def test_interrupcao_antes_da_publicacao_retoma_sem_inferencia(
+        config, tmp_path, monkeypatch, manual, structured_output):
+    renderer = pipeline.format_report_markdown
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    path = reports / "WEGE3.md"
+    path.write_text("Anterior")
+    args = {"structured_output": structured_output}
+    if not manual:
+        args.update(trigger_mtime=100, request_id="a" * 32)
+    requester = Mock(side_effect=sender)
+    monkeypatch.setattr(pipeline, "format_report_markdown", Mock(side_effect=KeyboardInterrupt))
+    with pytest.raises(KeyboardInterrupt):
+        run(config, tmp_path, textual_requester=requester, **args)
+    state_path = Path(config.raw_dir) / "assessments" / f"WEGE3.{'manual' if manual else 'queue'}.json"
+    state = json.loads(state_path.read_text())
+    assert state["execution"]["status"] == "pending"
+    assert not pipeline.has_errors(state["execution"]["result"])
+    assert path.read_text() == "Anterior"
+    assert requester.call_count == 2
+    monkeypatch.setattr(pipeline, "format_report_markdown", renderer)
+    forbidden = Mock(side_effect=AssertionError("Sem nova inferencia"))
+    second = run(config, tmp_path, textual_requester=forbidden, **args)
+    assert not second["failed_modes"]
+    forbidden.assert_not_called()
+    pipeline.collect_snapshot.assert_called_once()
+    saved = json.loads(state_path.read_text())
+    assert saved["execution"]["status"] == "done"
+    assert "completed_at" in saved
+    assert saved["snapshot"] == state["snapshot"]
+    assert saved["execution"]["result"] == state["execution"]["result"]
+    if not manual:
+        assert saved["request_id"] == "a" * 32
+    assert path.read_text() == renderer(state["execution"]["result"])
+
+
+def test_falha_de_publicacao_repetida_preserva_resultado_e_relatorio(config, tmp_path, monkeypatch):
+    writer = pipeline.write_report_file_atomic
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    path = reports / "WEGE3.md"
+    path.write_text("Anterior")
+    def failed(path, content):
+        if Path(path).suffix == ".md":
+            raise OSError("Publicacao indisponivel")
+        return writer(path, content)
+    monkeypatch.setattr(pipeline, "write_report_file_atomic", failed)
+    requester = Mock(side_effect=sender)
+    first = run(config, tmp_path, trigger_mtime=100, textual_requester=requester)
+    second = run(config, tmp_path, trigger_mtime=100, textual_requester=requester)
+    assert first["failed_modes"] == second["failed_modes"] == ["unified"]
+    assert requester.call_count == 2
+    state = json.loads(pipeline.queue_state_path(config, "WEGE3").read_text())
+    assert state["execution"]["status"] == "pending"
+    assert "completed_at" not in state
+    assert not pipeline.has_errors(state["execution"]["result"])
+    assert state["execution"]["error"] == "Publicacao indisponivel"
+    assert path.read_text() == "Anterior"
+    monkeypatch.setattr(pipeline, "write_report_file_atomic", writer)
+    forbidden = Mock(side_effect=AssertionError("Sem nova inferencia"))
+    third = run(config, tmp_path, trigger_mtime=100, textual_requester=forbidden)
+    assert not third["failed_modes"]
+    forbidden.assert_not_called()
+    assert "error" not in json.loads(pipeline.queue_state_path(config, "WEGE3").read_text())["execution"]
+
+
+def test_resultado_valido_pendente_nao_ignora_mudanca_de_configuracao(config, tmp_path):
+    first = run(config, tmp_path, trigger_mtime=100)
+    path = Path(first["manifest_path"])
+    state = json.loads(path.read_text())
+    state["execution"]["status"] = "pending"
+    del state["completed_at"]
+    path.write_text(json.dumps(state))
+    original = path.read_bytes()
+    config.llm_model = "outro-modelo"
+    forbidden = Mock(side_effect=AssertionError("Sem inferencia"))
+    with pytest.raises(ValueError, match="Campos alterados: report_model"):
+        run(config, tmp_path, trigger_mtime=100, textual_requester=forbidden)
+    forbidden.assert_not_called()
+    assert path.read_bytes() == original
+
+
+def test_resultado_com_erro_pendente_exige_nova_inferencia(config, tmp_path):
+    invalid = Mock(return_value="{}")
+    first = run(config, tmp_path, trigger_mtime=100, textual_requester=invalid)
+    assert first["failed_modes"] == ["unified"]
+    state = json.loads(pipeline.queue_state_path(config, "WEGE3").read_text())
+    assert pipeline.has_errors(state["execution"]["result"])
+    requester = Mock(side_effect=sender)
+    second = run(config, tmp_path, trigger_mtime=100, textual_requester=requester)
+    assert not second["failed_modes"]
+    assert requester.call_count == 2
+    pipeline.collect_snapshot.assert_called_once()
+
+
+def test_falha_ao_preservar_resultado_nao_publica(config, tmp_path, monkeypatch):
+    writer = pipeline.write_report_file_atomic
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    report = reports / "WEGE3.md"
+    report.write_text("Anterior")
+    def unavailable(path, content):
+        if Path(path).name.endswith(".queue.json") and "result" in json.loads(content)["execution"]:
+            raise OSError("Checkpoint indisponivel")
+        return writer(path, content)
+    monkeypatch.setattr(pipeline, "write_report_file_atomic", unavailable)
+    with pytest.raises(OSError, match="Checkpoint indisponivel"):
         run(config, tmp_path, trigger_mtime=100)
     state = json.loads(pipeline.queue_state_path(config, "WEGE3").read_text())
     assert state["execution"] == {"status": "pending"}
+    assert report.read_text() == "Anterior"
+
+
+def test_diagnostico_de_campos_adicionais_nao_expoe_conteudo(config, tmp_path):
+    first = run(config, tmp_path, trigger_mtime=100, textual_requester=lambda p: "{}")
+    path = Path(first["manifest_path"])
+    state = json.loads(path.read_text())
+    state["configuration"]["campo-com-segredo"] = "valor-sigiloso"
+    state["identity"] = pipeline._digest(state["configuration"])
+    path.write_text(json.dumps(state))
+    with pytest.raises(ValueError, match="Campos alterados: campos adicionais") as error:
+        pipeline.should_run_report(config, "WEGE3", 100)
+    assert "campo-com-segredo" not in str(error.value)
+    assert "valor-sigiloso" not in str(error.value)

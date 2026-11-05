@@ -153,9 +153,17 @@ def _load_job(config, ticker, structured_output=False, *, scope="queue",
     expected_transport = "on" if configuration.get("structured_output") == "json-schema-v1" else "off"
     if job.get("structured_output", "off") != expected_transport:
         raise ValueError(f"Transporte diverge da configuracao no estado: {path}")
-    if job["identity"] != _identity(config, structured_output=structured_output):
+    expected = _configuration(config, structured_output=structured_output)
+    if job["identity"] != _digest(expected):
         if job["execution"]["status"] == "pending":
+            fields = set(expected) | {"structured_output"}
+            changed = [field for field in sorted(fields)
+                       if (field in configuration) != (field in expected)
+                       or configuration.get(field) != expected.get(field)]
+            if set(configuration) - fields:
+                changed.append("campos adicionais")
             raise ValueError(f"Configuracao alterada com execucao pendente: {path}. "
+                             f"Campos alterados: {', '.join(changed)}. "
                              "Retome a configuracao anterior ou reinicie manualmente esse estado com o watcher parado.")
         # Na elegibilidade, configuracao nova nao equivale a um novo alerta.
         if preserve_completed:
@@ -268,26 +276,32 @@ def run_report(symbol, *, snapshot_path=None, config=None, trigger_mtime=None,
         attempted.append(mode)
         _logger.info("Processando ticker=%s modo=%s modelo=%s snapshot compartilhado", symbol, mode, model)
         try:
-            requester = textual_requester
-            if requester is None:
-                def requester(prompt, *, response_schema=None):
-                    return get_investment_analysis(prompt, model=model, api_key=config.llm_api_key,
-                                                   openai_url_base=config.openai_url_base,
-                                                   ollama_url_base=config.ollama_url_base,
-                                                   response_schema=response_schema, with_metadata=True)
-            result = classify_unified_snapshot(deepcopy(snapshot), model=model, requester=requester,
-                                               structured_output=structured_output)
+            result = entry.get("result")
+            if result is None or has_errors(result):
+                requester = textual_requester
+                if requester is None:
+                    def requester(prompt, *, response_schema=None):
+                        return get_investment_analysis(prompt, model=model, api_key=config.llm_api_key,
+                                                       openai_url_base=config.openai_url_base,
+                                                       ollama_url_base=config.ollama_url_base,
+                                                       response_schema=response_schema, with_metadata=True)
+                result = classify_unified_snapshot(deepcopy(snapshot), model=model, requester=requester,
+                                                   structured_output=structured_output)
+            else:
+                _logger.info("Retomando publicacao ticker=%s com resultado preservado, sem nova chamada ao modelo.", symbol)
             _validate_identity(result, snapshot, model)
             results[mode] = result
             entry.update(result=deepcopy(result), result_hash=_digest(result))
             if has_errors(result):
                 raise RuntimeError(f"Modo {mode} retornou erro; snapshot preservado para retomada.")
+            entry.pop("error", None)
+            # Preserva o resultado antes de publicar; arquivo e estado nao sao uma unica transacao.
+            write_report_file_atomic(state_path, json.dumps(job))
             text = format_report_markdown(result)
             write_report_file_atomic(Path(reports_dir) / f"{symbol}.md", text)
             (Path(reports_dir) / f"{symbol}.json").unlink(missing_ok=True)
             _logger.info("Relatorio publicado com frontmatter: %s", Path(reports_dir) / f"{symbol}.md")
             entry.update(status="done")
-            entry.pop("error", None)
             _logger.info("Concluido ticker=%s modo=%s dataset_id=%s", symbol, mode, job["dataset_id"])
         except Exception as exc:
             failed.append(mode)
