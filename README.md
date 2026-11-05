@@ -7,6 +7,30 @@ Projeto experimental para análise de ações da B3 com duas frentes complementa
 - pipeline de relatorio com yfinance, Fundamentus, dados CVM disponiveis no banco e LLM via API compativel com OpenAI ou Ollama, local ou remoto;
 - ETL de yfinance/Fundamentus e ingestao separada de demonstrativos CVM em DuckDB, com brutos e snapshots Parquet. BRAPI esta desabilitada no ETL atual.
 
+## Escolha como usar
+
+| Objetivo | Comando na raiz do projeto | O que acontece |
+| --- | --- | --- |
+| Ler o ultimo relatorio | `./relatorio consultar WEGE3` | Le o Markdown existente; nao coleta dados nem chama modelo. |
+| Solicitar uma atualizacao | `./relatorio gerar WEGE3` | Enfileira um pedido obrigatorio e retorna; o watcher precisa processa-lo depois. |
+| Gerar diretamente | `python main.py WEGE3` | Coleta dados e executa o modelo configurado; exige o ambiente completo. |
+
+Para apenas consultar, Python 3 e acesso ao diretorio de relatorios sao suficientes; nao precisa instalar as dependencias do gerador. Para enfileirar, mantenha o checkout com `src/` e use a mesma fila compartilhada pelo watcher. Nenhum desses dois comandos inicia containers. Para gerar diretamente sobre os mesmos dados, pare o watcher antes; nao execute dois geradores concorrentes.
+
+Veja os detalhes de [consulta](#consultar-um-relatorio-existente), [solicitacao pela fila](#solicitar-atualizacao-pela-fila) e [geracao direta](#fluxos-principais). A configuracao do modelo e necessaria apenas para executar o gerador ou o watcher, conforme [Ambiente](#ambiente) e [Docker](#docker).
+
+## Exemplo de relatorio
+
+O [relatorio de exemplo](examples/relatorio-exemplo.md) mostra uma saida experimental gerada automaticamente pelo programa para o simbolo MYPK3. Serve apenas para demonstrar o formato do arquivo e o funcionamento do projeto. Nao e um documento oficial da empresa nem uma analise financeira validada.
+
+O arquivo preserva a data, o modelo, as classificacoes e as justificativas da execucao usada como exemplo, com titulo e aviso identificando sua finalidade. Nao e atualizado pelo watcher. As referencias a fontes, numeros e eventos fazem parte do texto gerado e nao foram verificadas nesta documentacao; podem conter erros, inconsistencias e dados desatualizados. Nao use o exemplo como avaliacao atual do ativo ou recomendacao de investimento. Consulte o [AVISO](AVISO.md).
+
+Abra o arquivo pelo link acima ou leia-o no terminal, sem configurar modelo, coletar dados ou iniciar o watcher:
+
+```bash
+cat examples/relatorio-exemplo.md
+```
+
 ## Estrutura atual
 
 - `main.py`: comando do relatorio unificado, com classificacoes e frontmatter.
@@ -226,6 +250,8 @@ Nos dois casos, use um endereco acessivel pelo processo: no host pode ser localh
 Para gerar relatorios ou iniciar a fila, defina exatamente uma das duas URLs e `LLM_MODEL`. Configuracao ausente ou ambigua interrompe a execucao antes de coletar dados. Comandos de ETL e consulta nao exigem configurar LLM. `OPENAI_API_KEY` e `OPENAI_MODEL_NAME` foram substituidas por `LLM_API_KEY` e `LLM_MODEL`; migre o ambiente existente. Nao ha selecao automatica de protocolo nem tentativa de outro endpoint apos falha. `REPORT_HISTORY_N` nao e mais lida: o relatorio legado e a geracao de historico por versao foram removidos. Valores antigos podem ser retirados manualmente.
 
 No protocolo OpenAI, o cliente usa Chat Completions. No Ollama nativo, usa `POST /api/chat`, com `stream=false`, e extrai `message.content`. Quando `LLM_API_KEY` estiver preenchida, ela e enviada como Bearer token.
+
+Os clientes de chat usam timeout de 7.200 segundos. Esse valor nao e um prazo total para atender um pedido da fila: espera pelo watcher, coleta e multiplas etapas podem aumentar a duracao. Falhas preservam o estado para retomada conforme a secao [Publicacao e retomada](#publicacao-e-retomada-do-unificado); nao ha troca automatica de modelo para contornar carga ou indisponibilidade.
 
 ### ETL e storage
 
