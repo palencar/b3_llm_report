@@ -13,7 +13,7 @@ from b3_etl.ingest import run_ingest
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="ETL MVP BRAPI para dados fundamentalistas.")
+    parser = argparse.ArgumentParser(description="ETL de yfinance e Fundamentus para dados da B3.")
     parser.add_argument(
         "--tickers",
         type=str,
@@ -24,7 +24,7 @@ def _parse_args() -> argparse.Namespace:
         "--modules",
         type=str,
         default="financialData,balanceSheetHistory,incomeStatementHistory",
-        help="Modulos BRAPI separados por virgula.",
+        help="Parametro legado separado por virgula, sem efeito na coleta atual.",
     )
     parser.add_argument(
         "--skip-db",

@@ -57,6 +57,6 @@ def test_log_json_emitido_no_sucesso(tmp_path, capsys):
     ticker_logs = [l for l in logs if l.get("job") == "etl_ticker"]
     assert len(ticker_logs) == 1
     assert ticker_logs[0]["ticker"] == "PETR4"
-    assert "rows_fundamentals" in ticker_logs[0]
+    assert ticker_logs[0]["rows_fundamentals"] == 0
     assert ticker_logs[0]["rows_prices"] == 0  # skip_db=True, nenhum preço gravado no DB
     assert "duration_ms" in ticker_logs[0]

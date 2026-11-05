@@ -9,7 +9,6 @@ from b3_core.config import Config
 from b3_core.log import log_info, log_error
 from b3_storage.db import connect, missing_tables, table_exists
 from b3_storage.fundamentus import save_cache as _save_cache
-from b3_etl.brapi import fetch_quote, BrapiError
 from b3_etl.fundamentus import fetch_page, parse_indicators, _FIELD_MAP
 
 
@@ -309,20 +308,12 @@ def run_ingest(
     log_info("etl_start", tickers=tickers, modules=modules)
 
     for ticker in tickers:
-        # [BRAPI DESABILITADO 2026-09 — ver PROGRESSO.md]
-        # try:
-        #     data = fetch_quote(ticker, modules, config.brapi_base_url, config.brapi_key)
-        # except BrapiError as exc:
-        #     log_error("etl_ticker", ticker=ticker, error=str(exc))
-        #     continue
-
         try:
             payload = _fetch_yfinance_snapshot(ticker)
         except Exception as exc:
             log_error("etl_ticker", ticker=ticker, error=str(exc))
             continue
 
-        fundamentals_records: list[dict] = []
         rows_prices = 0
         ticker_start = time.time()
 
@@ -382,9 +373,6 @@ def run_ingest(
 
                 rows_prices = 1
 
-                # fundamentals: BRAPI desabilitado — CVM + Fundamentus cobrem
-                # (fundamentals_records permanece vazio)
-
                 _delete_then_insert(
                     con,
                     "raw_files",
@@ -406,7 +394,7 @@ def run_ingest(
         log_info(
             "etl_ticker",
             ticker=ticker,
-            rows_fundamentals=len(fundamentals_records),
+            rows_fundamentals=0,
             rows_prices=rows_prices,
             duration_ms=int((time.time() - ticker_start) * 1000),
         )
@@ -429,7 +417,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="ETL de dados fundamentais B3")
     parser.add_argument("tickers", nargs="+", help="Tickers (ex: PETR4 VALE3)")
-    parser.add_argument("--modules", nargs="*", default=[], help="Módulos BRAPI (vazio = todos)")
+    parser.add_argument("--modules", nargs="*", default=[], help="Parametro legado, sem efeito na coleta atual.")
     parser.add_argument("--no-snapshot", action="store_true", help="Não escrever snapshot")
     parser.add_argument("--skip-db", action="store_true", help="Pular escrita no DB")
     args = parser.parse_args()
